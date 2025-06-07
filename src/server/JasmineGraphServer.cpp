@@ -140,6 +140,8 @@ int JasmineGraphServer::run(std::string masterIp, int numberofWorkers, std::stri
     masterPortVector.push_back(Conts::JASMINEGRAPH_FRONTEND_PORT);
     updateOperationalGraphList();
 
+    Utils::setJasmineGraphProperty("org.jasminegraph.server.npartitions", std::to_string(this->numberOfWorkers));
+
     if (jasminegraph_profile == PROFILE_K8S) {
         // Create K8s worker controller
         (void)K8sWorkerController::getInstance(masterIp, numberofWorkers, sqlite);
@@ -183,6 +185,7 @@ void JasmineGraphServer::start_workers() {
         if ((this->numberOfWorkers) == -1) {
             nWorkers = Utils::getJasmineGraphProperty("org.jasminegraph.server.nworkers");
         }
+  //      Utils::setJasmineGraphProperty("org.jasminegraph.server.npartitions", std::to_string(this->numberOfWorkers));
         enableNmon = Utils::getJasmineGraphProperty("org.jasminegraph.server.enable.nmon");
     } else if (jasminegraph_profile == PROFILE_DOCKER) {
         hostsList = getWorkerVector(workerHosts);
