@@ -140,6 +140,8 @@ int JasmineGraphServer::run(std::string masterIp, int numberofWorkers, std::stri
     masterPortVector.push_back(Conts::JASMINEGRAPH_FRONTEND_PORT);
     updateOperationalGraphList();
 
+    Utils::setJasmineGraphProperty("org.jasminegraph.server.npartitions", std::to_string(this->numberOfWorkers));
+
     if (jasminegraph_profile == PROFILE_K8S) {
         // Create K8s worker controller
         (void)K8sWorkerController::getInstance(masterIp, numberofWorkers, sqlite);
@@ -183,6 +185,7 @@ void JasmineGraphServer::start_workers() {
         if ((this->numberOfWorkers) == -1) {
             nWorkers = Utils::getJasmineGraphProperty("org.jasminegraph.server.nworkers");
         }
+  //      Utils::setJasmineGraphProperty("org.jasminegraph.server.npartitions", std::to_string(this->numberOfWorkers));
         enableNmon = Utils::getJasmineGraphProperty("org.jasminegraph.server.enable.nmon");
     } else if (jasminegraph_profile == PROFILE_DOCKER) {
         hostsList = getWorkerVector(workerHosts);
@@ -443,7 +446,7 @@ void JasmineGraphServer::startRemoteWorkers(std::vector<int> workerPortsVector, 
                                         " --ENABLE_NMON " + enableNmon + " >" + worker_logdir + "/worker.log 2>&1";
                 } else {
                     serverStartScript =
-                        "docker run -v " + instanceDataFolder + ":" + instanceDataFolder + " -v " +
+                        "docker run --rm     --cap-add CAP_SYS_PTRACE     --cap-add CAP_SYS_ADMIN     --security-opt apparmor=unconfined -v " + instanceDataFolder + ":" + instanceDataFolder + " -v " +
                         aggregateDataFolder + ":" + aggregateDataFolder + " -v " + nmonFileLocation + ":" +
                         nmonFileLocation + " -v " + instanceDataFolder + "/" + to_string(i) + "/logs" + ":" +
                         "/var/tmp/jasminegraph/logs" + " -p " + std::to_string(workerPortsVector.at(i)) + ":" +
@@ -465,7 +468,7 @@ void JasmineGraphServer::startRemoteWorkers(std::vector<int> workerPortsVector, 
                         worker_logdir + "/worker.log 2>&1";
                 } else {
                     serverStartScript =
-                        "docker -H ssh://" + host + " run -v " + instanceDataFolder + ":" + instanceDataFolder +
+                        "docker -H ssh://" + host + " run --rm     --cap-add CAP_SYS_PTRACE     --cap-add CAP_SYS_ADMIN     --security-opt apparmor=unconfined -v " + instanceDataFolder + ":" + instanceDataFolder +
                         " -v " + aggregateDataFolder + ":" + aggregateDataFolder + " -v " + nmonFileLocation + ":" +
                         nmonFileLocation + " -v " + instanceDataFolder + "/" + to_string(i) + "/logs" + ":" +
                         "/var/tmp/jasminegraph/logs" + " -p " + std::to_string(workerPortsVector.at(i)) + ":" +
