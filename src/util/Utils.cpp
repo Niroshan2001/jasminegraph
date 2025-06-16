@@ -128,6 +128,31 @@ std::string Utils::getJasmineGraphProperty(std::string key) {
     return "";
 }
 
+void Utils::setJasmineGraphProperty(std::string key, std::string value) {
+        if (!propertiesMapInitialized) {
+        propertiesMapMutex.lock();
+        if (!propertiesMapInitialized) {  // double-checking lock
+            const vector<std::string> &vec = Utils::getFileContent(ROOT_DIR "conf/jasminegraph-server.properties");
+            for (auto it = vec.begin(); it < vec.end(); it++) {
+                std::string item = *it;
+                if (item.length() > 0 && !(item.rfind("#", 0) == 0)) {
+                    const std::vector<std::string> &vec2 = split(item, '=');
+                    if (vec2.size() == 2) {
+                        Utils::propertiesMap[vec2.at(0)] = vec2.at(1);
+                    } else {
+                        Utils::propertiesMap[vec2.at(0)] = string(" ");
+                    }
+                }
+            }
+        }
+        propertiesMapInitialized = true;
+        propertiesMapMutex.unlock();
+    }
+  //  propertiesMapMutex.lock();
+    Utils::propertiesMap[key] = value;
+ //   propertiesMapMutex.unlock();
+}
+
 std::vector<Utils::worker> Utils::getWorkerList(SQLiteDBInterface *sqlite) {
     vector<Utils::worker> workerVector;
     std::vector<vector<pair<string, string>>> v =
