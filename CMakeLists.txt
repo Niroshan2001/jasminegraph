@@ -192,7 +192,7 @@ set(SOURCES src/backend/JasmineGraphBackend.cpp
 
 )
 
-if (CMAKE_BUILD_TYPE STREQUAL "DEBUG")
+if (CMAKE_BUILD_TYPE STREQUAL "Debug")
 add_compile_options(-DUNIT_TEST)
 endif ()
 
@@ -202,12 +202,27 @@ add_executable(JasmineGraph main.h main.cpp)
 
 target_compile_definitions(JasmineGraphLib PUBLIC ROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/")
 
-if (CMAKE_ENABLE_DEBUG)
-    message(STATUS "DEBUG enabled")
+if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+    message(STATUS "Debug build - adding debug symbols and profiling flags")
+    # Standard debug symbols
     target_compile_options(JasmineGraph PRIVATE -g)
+    target_compile_options(JasmineGraphLib PRIVATE -g)
+    
+    # VTune profiling optimizations
+    target_compile_options(JasmineGraph PRIVATE -fno-omit-frame-pointer)
+    target_compile_options(JasmineGraphLib PRIVATE -fno-omit-frame-pointer)
+    
+    # Additional debugging information for better symbol resolution
+    target_compile_options(JasmineGraph PRIVATE -gdwarf-4)
+    target_compile_options(JasmineGraphLib PRIVATE -gdwarf-4)
+    
+    # Disable function inlining for clearer profiling results
+    target_compile_options(JasmineGraph PRIVATE -fno-inline-functions)
+    target_compile_options(JasmineGraphLib PRIVATE -fno-inline-functions)
+else()
+    # Only strip symbols in non-Debug builds
+    SET(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-s,--gc-sections")
 endif ()
-
-SET(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-s,--gc-sections")
 
 #TODO: Need to install the library separately
 target_link_libraries(JasmineGraphLib PRIVATE sqlite3)
@@ -237,7 +252,7 @@ target_link_libraries(JasmineGraphLib PRIVATE curl)
 target_link_libraries(JasmineGraphLib PRIVATE antlr4-runtime)
 
 
-if (CMAKE_BUILD_TYPE STREQUAL "DEBUG")
+if (CMAKE_BUILD_TYPE STREQUAL "Debug")
     # Include google test
     include(FetchContent)
     FetchContent_Declare(
@@ -262,5 +277,14 @@ if (CMAKE_BUILD_TYPE STREQUAL "DEBUG")
             NAME coverage
             EXECUTABLE JasmineGraphUnitTest
             BASE_DIRECTORY "${PROJECT_SOURCE_DIR}/src"
+    )
+endif ()
+
+# VTune profiling optimized build target
+if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+    add_custom_target(JasmineGraphVTune
+        COMMAND ${CMAKE_COMMAND} -E echo "Building VTune-optimized version..."
+        DEPENDS JasmineGraph
+        COMMENT "VTune profiling optimized build ready"
     )
 endif ()

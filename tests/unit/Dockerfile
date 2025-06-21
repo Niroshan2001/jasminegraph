@@ -34,7 +34,7 @@ COPY ./tests/unit ./tests/unit
 
 WORKDIR "${JASMINEGRAPH_HOME}/build"
 
-RUN cmake -DCMAKE_BUILD_TYPE=DEBUG ..
+RUN cmake -DCMAKE_BUILD_TYPE=Debug ..
 RUN make -j4
 
 CMD ["bash", "-c", "LD_LIBRARY_PATH=/usr/local/lib make -j2 coverage && cp coverage.xml ../coverage/"]

@@ -14,8 +14,12 @@ WORKDIR "${JASMINEGRAPH_HOME}"
 ARG DEBUG="false"
 RUN if [ "$DEBUG" = "true" ]; then apt-get update \
 && apt-get install --no-install-recommends -y gdb gdbserver \
+# Add Intel VTune prerequisites
+&& apt-get install --no-install-recommends -y binutils-dev \
 && apt-get clean; fi
 
+# Set environment variables for better profiling
+ENV INTEL_VTUNE_SYMBOLICATION=1
 
 WORKDIR "${JASMINEGRAPH_HOME}"
 COPY ./build.sh ./build.sh

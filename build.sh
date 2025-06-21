@@ -1,8 +1,8 @@
 #!/bin/bash
 
 if [ "$1" = "--debug" ]; then
-    cmake -DCMAKE_ENABLE_DEBUG=1 clean .
+    cmake -DCMAKE_BUILD_TYPE=Debug clean .
 else
-    cmake clean .
+    cmake -DCMAKE_BUILD_TYPE=Release clean .
 fi
 cmake --build . --target JasmineGraph -- -j 4
