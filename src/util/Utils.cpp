@@ -128,7 +128,7 @@ std::string Utils::getJasmineGraphProperty(std::string key) {
     return "";
 }
 
-void Utils::setJasmineGraphProperty(std::string key, std::string value) {Add commentMore actions
+void Utils::setJasmineGraphProperty(std::string key, std::string value) {
         if (!propertiesMapInitialized) {
         propertiesMapMutex.lock();
         if (!propertiesMapInitialized) {  // double-checking lock
