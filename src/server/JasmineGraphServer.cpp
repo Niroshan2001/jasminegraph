@@ -446,7 +446,8 @@ void JasmineGraphServer::startRemoteWorkers(std::vector<int> workerPortsVector, 
                                         " --ENABLE_NMON " + enableNmon + " >" + worker_logdir + "/worker.log 2>&1";
                 } else {
                     serverStartScript =
-                        "docker run --rm     --cap-add CAP_SYS_PTRACE     --cap-add CAP_SYS_ADMIN     --security-opt apparmor=unconfined -v " + instanceDataFolder + ":" + instanceDataFolder + " -v " +
+                        "docker run --rm     --cap-add CAP_SYS_PTRACE     --cap-add CAP_SYS_ADMIN     --security-opt apparmor=unconfined -v " + 
+                        instanceDataFolder + ":" + instanceDataFolder + " -v " +
                         aggregateDataFolder + ":" + aggregateDataFolder + " -v " + nmonFileLocation + ":" +
                         nmonFileLocation + " -v " + instanceDataFolder + "/" + to_string(i) + "/logs" + ":" +
                         "/var/tmp/jasminegraph/logs" + " -p " + std::to_string(workerPortsVector.at(i)) + ":" +
@@ -468,7 +469,8 @@ void JasmineGraphServer::startRemoteWorkers(std::vector<int> workerPortsVector, 
                         worker_logdir + "/worker.log 2>&1";
                 } else {
                     serverStartScript =
-                        "docker -H ssh://" + host + " run --rm     --cap-add CAP_SYS_PTRACE     --cap-add CAP_SYS_ADMIN     --security-opt apparmor=unconfined -v " + instanceDataFolder + ":" + instanceDataFolder +
+                        "docker -H ssh://" + host + " run --rm     --cap-add CAP_SYS_PTRACE     --cap-add CAP_SYS_ADMIN     --security-opt apparmor=unconfined -v " + 
+                        instanceDataFolder + ":" + instanceDataFolder +
                         " -v " + aggregateDataFolder + ":" + aggregateDataFolder + " -v " + nmonFileLocation + ":" +
                         nmonFileLocation + " -v " + instanceDataFolder + "/" + to_string(i) + "/logs" + ":" +
                         "/var/tmp/jasminegraph/logs" + " -p " + std::to_string(workerPortsVector.at(i)) + ":" +
