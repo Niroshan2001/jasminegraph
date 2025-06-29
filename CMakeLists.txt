@@ -1,7 +1,13 @@
 cmake_minimum_required(VERSION 3.10)
 project(JasmineGraph)
 set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_ENABLE_DEBUG true)
+
+# Enable debug by default for VTune profiling
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE "Debug")
+endif()
+
+set(CMAKE_ENABLE_DEBUG ON)
 
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
@@ -204,8 +210,13 @@ target_compile_definitions(JasmineGraphLib PUBLIC ROOT_DIR="${CMAKE_CURRENT_SOUR
 
 if (CMAKE_ENABLE_DEBUG)
     message(STATUS "DEBUG enabled")
-    target_compile_options(JasmineGraph PRIVATE -g)
-    target_compile_options(JasmineGraphLib PRIVATE -g)
+    # Add debug symbols for VTune profiling
+    target_compile_options(JasmineGraph PRIVATE -g -O0 -fno-omit-frame-pointer)
+    target_compile_options(JasmineGraphLib PRIVATE -g -O0 -fno-omit-frame-pointer)
+    
+    # Additional debug information for better symbol resolution
+    target_compile_options(JasmineGraph PRIVATE -gdwarf-4)
+    target_compile_options(JasmineGraphLib PRIVATE -gdwarf-4)
 endif ()
 
 #SET(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-s,--gc-sections")
