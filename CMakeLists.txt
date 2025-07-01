@@ -198,7 +198,7 @@ set(SOURCES src/backend/JasmineGraphBackend.cpp
 
 )
 
-if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+if (CMAKE_BUILD_TYPE STREQUAL "DEBUG")
 add_compile_options(-DUNIT_TEST)
 endif ()
 
@@ -253,7 +253,7 @@ target_link_libraries(JasmineGraphLib PRIVATE curl)
 target_link_libraries(JasmineGraphLib PRIVATE antlr4-runtime)
 
 
-if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+if (CMAKE_BUILD_TYPE STREQUAL "DEBUG")
     # Include google test
     include(FetchContent)
     FetchContent_Declare(
