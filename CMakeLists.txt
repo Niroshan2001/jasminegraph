@@ -198,7 +198,7 @@ set(SOURCES src/backend/JasmineGraphBackend.cpp
 
 )
 
-if (CMAKE_BUILD_TYPE STREQUAL "DEBUG")
+if (CMAKE_BUILD_TYPE STREQUAL "Debug")
 add_compile_options(-DUNIT_TEST)
 endif ()
 
@@ -217,6 +217,10 @@ if (CMAKE_ENABLE_DEBUG)
     # Additional debug information for better symbol resolution
     target_compile_options(JasmineGraph PRIVATE -gdwarf-4)
     target_compile_options(JasmineGraphLib PRIVATE -gdwarf-4)
+    
+    # Explicitly prevent stripping of debug symbols
+    target_link_options(JasmineGraph PRIVATE -g)
+    target_link_options(JasmineGraphLib PRIVATE -g)
 endif ()
 
 #SET(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-s,--gc-sections")
@@ -249,7 +253,7 @@ target_link_libraries(JasmineGraphLib PRIVATE curl)
 target_link_libraries(JasmineGraphLib PRIVATE antlr4-runtime)
 
 
-if (CMAKE_BUILD_TYPE STREQUAL "DEBUG")
+if (CMAKE_BUILD_TYPE STREQUAL "Debug")
     # Include google test
     include(FetchContent)
     FetchContent_Declare(
