@@ -21,6 +21,7 @@ RUN apt-get update && apt-get install -y \
     libc6-dbg \
     binutils \
     file \
+    strace \
     && apt-get clean
 
 
@@ -33,6 +34,14 @@ COPY ./globals.h ./globals.h
 COPY ./src ./src
 
 RUN if [ "$DEBUG" = "true" ]; then echo "building in DEBUG mode" && sh build.sh --debug; else sh build.sh; fi
+
+# Verify the build was successful and show file information
+RUN ls -la /home/ubuntu/software/jasminegraph/
+RUN if [ -f "/home/ubuntu/software/jasminegraph/JasmineGraph" ]; then \
+    echo "JasmineGraph binary found!" && \
+    file /home/ubuntu/software/jasminegraph/JasmineGraph && \
+    ldd /home/ubuntu/software/jasminegraph/JasmineGraph; \
+    else echo "ERROR: JasmineGraph binary not found!"; fi
 
 COPY ./run-docker.sh ./run-docker.sh
 COPY ./src_python ./src_python
