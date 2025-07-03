@@ -19,8 +19,8 @@ RUN if [ "$DEBUG" = "true" ]; then apt-get update \
 # Install debug symbol packages for better VTune support
 RUN apt-get update && apt-get install -y \
     libc6-dbg \
-    libgcc-s1-dbg \
-    libstdc++6-dbg \
+    binutils \
+    file \
     && apt-get clean
 
 
