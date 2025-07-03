@@ -13,8 +13,15 @@ WORKDIR "${JASMINEGRAPH_HOME}"
 
 ARG DEBUG="false"
 RUN if [ "$DEBUG" = "true" ]; then apt-get update \
-&& apt-get install --no-install-recommends -y gdb gdbserver \
+&& apt-get install --no-install-recommends -y gdb gdbserver binutils \
 && apt-get clean; fi
+
+# Install debug symbol packages for better VTune support
+RUN apt-get update && apt-get install -y \
+    libc6-dbg \
+    libgcc-s1-dbg \
+    libstdc++6-dbg \
+    && apt-get clean
 
 
 WORKDIR "${JASMINEGRAPH_HOME}"

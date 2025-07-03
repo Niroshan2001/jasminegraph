@@ -221,9 +221,29 @@ target_compile_options(JasmineGraphLib PRIVATE -g3 -fno-omit-frame-pointer)
 target_compile_options(JasmineGraph PRIVATE -gdwarf-4)
 target_compile_options(JasmineGraphLib PRIVATE -gdwarf-4)
 
+# Additional VTune profiling flags for Docker containers
+target_compile_options(JasmineGraph PRIVATE -fasynchronous-unwind-tables)
+target_compile_options(JasmineGraphLib PRIVATE -fasynchronous-unwind-tables)
+
 # Ensure debug symbols are preserved in the final binary
 target_link_options(JasmineGraph PRIVATE -g -rdynamic)
 target_link_options(JasmineGraphLib PRIVATE -g -rdynamic)
+
+# Force inclusion of all symbols in the binary
+target_link_options(JasmineGraph PRIVATE -Wl,--export-dynamic)
+target_link_options(JasmineGraphLib PRIVATE -Wl,--export-dynamic)
+
+# Disable symbol stripping for ALL build types
+set_target_properties(JasmineGraph PROPERTIES 
+    LINK_FLAGS_RELEASE "-g -rdynamic"
+    LINK_FLAGS_RELWITHDEBINFO "-g -rdynamic"
+    LINK_FLAGS_MINSIZEREL "-g -rdynamic"
+)
+set_target_properties(JasmineGraphLib PROPERTIES 
+    LINK_FLAGS_RELEASE "-g -rdynamic"
+    LINK_FLAGS_RELWITHDEBINFO "-g -rdynamic"
+    LINK_FLAGS_MINSIZEREL "-g -rdynamic"
+)
 
 # Disable symbol stripping
 set_target_properties(JasmineGraph PROPERTIES LINK_FLAGS_RELEASE "-g")
@@ -243,6 +263,14 @@ set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -rdynamic")
 
 # Disable dead code elimination to preserve all symbols
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-function-sections -fno-data-sections")
+
+# Additional flags to ensure debug symbols are preserved
+set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g3 -O0")
+set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} -g3")
+
+# Prevent stripping of debug symbols during linking
+set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,--no-strip-debug")
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--no-strip-debug")
 
 #SET(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-s,--gc-sections")
 
