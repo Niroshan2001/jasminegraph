@@ -9,7 +9,10 @@ else
 fi
 
 echo "Starting build process..."
-cmake --build . --target JasmineGraph -- -j 4 -v
+cmake --build . --target JasmineGraph -v || {
+    echo "Build failed, trying alternative..."
+    make JasmineGraph -j 4
+}
 
 echo "Build process completed. Checking for binary..."
 if [ -f "./JasmineGraph" ]; then

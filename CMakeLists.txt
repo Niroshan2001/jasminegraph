@@ -214,8 +214,9 @@ endif()
 add_library(JasmineGraphLib ${HEADERS} ${SOURCES} ${GENERATED_SRC})
 add_executable(JasmineGraph main.h main.cpp)
 
-# Ensure the executable links with the library
+# Ensure the executable links with the library and depends on it being built first
 target_link_libraries(JasmineGraph JasmineGraphLib)
+add_dependencies(JasmineGraph JasmineGraphLib)
 
 target_compile_definitions(JasmineGraphLib PUBLIC ROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/")
 
@@ -254,10 +255,6 @@ set_target_properties(JasmineGraphLib PROPERTIES
     LINK_FLAGS_MINSIZEREL "-g -rdynamic"
 )
 
-# Disable symbol stripping
-set_target_properties(JasmineGraph PROPERTIES LINK_FLAGS_RELEASE "-g")
-set_target_properties(JasmineGraphLib PROPERTIES LINK_FLAGS_RELEASE "-g")
-
 if (CMAKE_ENABLE_DEBUG)
     message(STATUS "DEBUG mode enabled")
     # Additional debug options for DEBUG builds
@@ -277,9 +274,8 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-function-sections -fno-data-section
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g3 -O0")
 set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} -g3")
 
-# Prevent stripping of debug symbols during linking
-set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,--no-strip-debug")
-set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--no-strip-debug")
+# Note: --no-strip-debug is not supported by GNU ld, removed
+# Prevent stripping is handled by other flags above
 
 #SET(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-s,--gc-sections")
 
