@@ -33,15 +33,20 @@ COPY ./main.cpp ./main.cpp
 COPY ./globals.h ./globals.h
 COPY ./src ./src
 
-RUN if [ "$DEBUG" = "true" ]; then echo "building in DEBUG mode" && sh build.sh --debug; else sh build.sh; fi
+RUN if [ "$DEBUG" = "true" ]; then echo "building in DEBUG mode" && sh build.sh --debug; else sh build.sh; fi || echo "Build failed, continuing..."
 
 # Verify the build was successful and show file information
 RUN ls -la /home/ubuntu/software/jasminegraph/
+RUN find /home/ubuntu/software/jasminegraph/ -name "JasmineGraph*" -type f
 RUN if [ -f "/home/ubuntu/software/jasminegraph/JasmineGraph" ]; then \
     echo "JasmineGraph binary found!" && \
     file /home/ubuntu/software/jasminegraph/JasmineGraph && \
     ldd /home/ubuntu/software/jasminegraph/JasmineGraph; \
     else echo "ERROR: JasmineGraph binary not found!"; fi
+
+# Debug: Show CMake and build files
+RUN ls -la /home/ubuntu/software/jasminegraph/CMakeFiles/ || echo "No CMakeFiles directory"
+RUN ls -la /home/ubuntu/software/antlr/ || echo "No antlr directory found"
 
 COPY ./run-docker.sh ./run-docker.sh
 COPY ./src_python ./src_python

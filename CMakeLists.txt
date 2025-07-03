@@ -204,7 +204,13 @@ if (CMAKE_BUILD_TYPE STREQUAL "DEBUG")
 add_compile_options(-DUNIT_TEST)
 endif ()
 
+# Check for ANTLR generated files
 file(GLOB GENERATED_SRC /home/ubuntu/software/antlr/*.cpp)
+if(NOT GENERATED_SRC)
+    message(WARNING "No ANTLR generated files found in /home/ubuntu/software/antlr/")
+    set(GENERATED_SRC "")
+endif()
+
 add_library(JasmineGraphLib ${HEADERS} ${SOURCES} ${GENERATED_SRC})
 add_executable(JasmineGraph main.h main.cpp)
 
