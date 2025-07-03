@@ -33,7 +33,13 @@ COPY ./main.cpp ./main.cpp
 COPY ./globals.h ./globals.h
 COPY ./src ./src
 
-RUN if [ "$DEBUG" = "true" ]; then echo "building in DEBUG mode" && sh build.sh --debug; else sh build.sh; fi || echo "Build failed, continuing..."
+RUN if [ "$DEBUG" = "true" ]; then echo "building in DEBUG mode" && sh build.sh --debug 2>&1 | tee build.log; else sh build.sh 2>&1 | tee build.log; fi || echo "Build failed, continuing..."
+
+# Show build log on failure
+RUN if [ ! -f "/home/ubuntu/software/jasminegraph/JasmineGraph" ]; then \
+    echo "=== BUILD FAILED - Showing build log ===" && \
+    cat build.log && \
+    echo "=== END BUILD LOG ==="; fi
 
 # Verify the build was successful and show file information
 RUN ls -la /home/ubuntu/software/jasminegraph/

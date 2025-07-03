@@ -214,6 +214,9 @@ endif()
 add_library(JasmineGraphLib ${HEADERS} ${SOURCES} ${GENERATED_SRC})
 add_executable(JasmineGraph main.h main.cpp)
 
+# Ensure the executable links with the library
+target_link_libraries(JasmineGraph JasmineGraphLib)
+
 target_compile_definitions(JasmineGraphLib PUBLIC ROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/")
 
 # Always enable debug symbols for VTune profiling (regardless of build type)
