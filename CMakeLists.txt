@@ -2,11 +2,13 @@ cmake_minimum_required(VERSION 3.10)
 project(JasmineGraph)
 set(CMAKE_CXX_STANDARD 17)
 
-# Enable debug by default for VTune profiling
+# Set build type for VTune profiling if not specified
 if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE "Debug")
+    set(CMAKE_BUILD_TYPE "RelWithDebInfo")
+    message(STATUS "Build type not specified, setting to RelWithDebInfo for VTune profiling")
 endif()
 
+# Always enable debug symbols for VTune, regardless of build type
 set(CMAKE_ENABLE_DEBUG ON)
 
 set(THREADS_PREFER_PTHREAD_FLAG ON)
@@ -208,20 +210,39 @@ add_executable(JasmineGraph main.h main.cpp)
 
 target_compile_definitions(JasmineGraphLib PUBLIC ROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/")
 
+# Always enable debug symbols for VTune profiling (regardless of build type)
+message(STATUS "Enabling debug symbols for VTune profiling")
+
+# Add comprehensive debug symbols for VTune profiling
+target_compile_options(JasmineGraph PRIVATE -g3 -fno-omit-frame-pointer)
+target_compile_options(JasmineGraphLib PRIVATE -g3 -fno-omit-frame-pointer)
+
+# Use DWARF-4 format for better compatibility with VTune
+target_compile_options(JasmineGraph PRIVATE -gdwarf-4)
+target_compile_options(JasmineGraphLib PRIVATE -gdwarf-4)
+
+# Ensure debug symbols are preserved in the final binary
+target_link_options(JasmineGraph PRIVATE -g -rdynamic)
+target_link_options(JasmineGraphLib PRIVATE -g -rdynamic)
+
+# Disable symbol stripping
+set_target_properties(JasmineGraph PROPERTIES LINK_FLAGS_RELEASE "-g")
+set_target_properties(JasmineGraphLib PROPERTIES LINK_FLAGS_RELEASE "-g")
+
 if (CMAKE_ENABLE_DEBUG)
-    message(STATUS "DEBUG enabled")
-    # Add debug symbols for VTune profiling
-    target_compile_options(JasmineGraph PRIVATE -g -O0 -fno-omit-frame-pointer)
-    target_compile_options(JasmineGraphLib PRIVATE -g -O0 -fno-omit-frame-pointer)
-    
-    # Additional debug information for better symbol resolution
-    target_compile_options(JasmineGraph PRIVATE -gdwarf-4)
-    target_compile_options(JasmineGraphLib PRIVATE -gdwarf-4)
-    
-    # Explicitly prevent stripping of debug symbols
-    target_link_options(JasmineGraph PRIVATE -g)
-    target_link_options(JasmineGraphLib PRIVATE -g)
+    message(STATUS "DEBUG mode enabled")
+    # Additional debug options for DEBUG builds
+    target_compile_options(JasmineGraph PRIVATE -O0)
+    target_compile_options(JasmineGraphLib PRIVATE -O0)
 endif ()
+
+# VTune profiling specific settings
+# Export dynamic symbol table for better function name resolution
+set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -rdynamic")
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -rdynamic")
+
+# Disable dead code elimination to preserve all symbols
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-function-sections -fno-data-sections")
 
 #SET(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-s,--gc-sections")
 
