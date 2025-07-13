@@ -16,6 +16,7 @@ limitations under the License.
 #include <flatbuffers/flatbuffers.h>
 
 #include "../../util/Conts.h"
+#include "../../util/Utils.h"
 #include "../../util/logger/Logger.h"
 
 Logger partitioner_logger;
@@ -651,6 +652,9 @@ void MetisPartitioner::populatePartMaps(std::map<int, int> partMap, int part) {
 }
 
 void MetisPartitioner::writeSerializedPartitionFiles(int part) {
+    // Set meaningful thread name for VTune profiling
+    Utils::setThreadName("Partition_Writer_" + std::to_string(part));
+    
     string outputFilePart = outputFilePath + "/" + std::to_string(this->graphID) + "_" + std::to_string(part);
 
     std::map<int, std::vector<int>> partEdgeMap = partitionedLocalGraphStorageMap[part];
@@ -666,6 +670,9 @@ void MetisPartitioner::writeSerializedPartitionFiles(int part) {
 }
 
 void MetisPartitioner::writeSerializedMasterFiles(int part) {
+    // Set meaningful thread name for VTune profiling
+    Utils::setThreadName("Master_Writer_" + std::to_string(part));
+    
     string outputFilePartMaster =
         outputFilePath + "/" + std::to_string(this->graphID) + "_centralstore_" + std::to_string(part);
 
@@ -681,6 +688,9 @@ void MetisPartitioner::writeSerializedMasterFiles(int part) {
 }
 
 void MetisPartitioner::writeSerializedDuplicateMasterFiles(int part) {
+    // Set meaningful thread name for VTune profiling
+    Utils::setThreadName("DupMaster_Writer_" + std::to_string(part));
+    
     string outputFilePartMaster =
         outputFilePath + "/" + std::to_string(this->graphID) + "_centralstore_dp_" + std::to_string(part);
 

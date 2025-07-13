@@ -209,6 +209,10 @@ class Utils {
     static string getFrontendInput(int connFd);
     static string getPartitionAlgorithm(string graphID, std::string host);
     static string getGraphDirection(string graphID, std::string host);
+    
+    // Thread naming utility for better VTune profiling
+    static void setThreadName(const std::string& name);
+    static void setThreadName(const char* name);
 };
 
 #endif  // JASMINEGRAPH_UTILS_H

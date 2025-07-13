@@ -20,6 +20,12 @@ limitations under the License.
 #include <pwd.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <pthread.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#include <processthreadsapi.h>
+#endif
 
 #include <chrono>
 #include <ctime>
@@ -1993,4 +1999,30 @@ bool Utils::sendDataFromWorkerToWorker(string masterIP, int graphID, string part
     auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - startTime);
     util_logger.info(" Time Taken: " + std::to_string(elapsed.count()) + " seconds");
     return true;
+}
+
+// Thread naming utility functions for better VTune profiling
+void Utils::setThreadName(const std::string& name) {
+    setThreadName(name.c_str());
+}
+
+void Utils::setThreadName(const char* name) {
+#ifdef __linux__
+    // On Linux, use pthread_setname_np
+    pthread_setname_np(pthread_self(), name);
+#elif defined(__APPLE__)
+    // On macOS, use pthread_setname_np with different signature
+    pthread_setname_np(name);
+#elif defined(_WIN32)
+    // On Windows, use SetThreadDescription (Windows 10 version 1607 and later)
+    // Convert char* to wchar_t*
+    size_t len = strlen(name) + 1;
+    wchar_t* wname = new wchar_t[len];
+    mbstowcs(wname, name, len);
+    SetThreadDescription(GetCurrentThread(), wname);
+    delete[] wname;
+#else
+    // For other platforms, do nothing
+    (void)name; // Suppress unused parameter warning
+#endif
 }

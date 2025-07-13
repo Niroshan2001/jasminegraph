@@ -60,7 +60,10 @@ int JasmineGraphInstance::start_running(string hostName, string masterHost, int 
     pthread_create(&instanceFileTransferThread, NULL, runFileTransferService, this);
 
     std::thread *myThreads = new std::thread[1];
-    myThreads[0] = std::thread(StatisticCollector::logLoadAverage, "worker");
+    myThreads[0] = std::thread([]() {
+        Utils::setThreadName("JG_StatisticCollector");
+        StatisticCollector::logLoadAverage("worker");
+    });
 
     pthread_join(instanceCommunicatorThread, NULL);
     pthread_join(instanceFileTransferThread, NULL);

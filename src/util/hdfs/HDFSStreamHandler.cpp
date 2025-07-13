@@ -264,18 +264,25 @@ void HDFSStreamHandler::startStreamingFromBufferToPartitions() {
     auto startTime = high_resolution_clock::now();
     HDFSMultiThreadedHashPartitioner partitioner(numberOfPartitions, graphId, masterIP, isDirected);
 
-    std::thread readerThread(&HDFSStreamHandler::streamFromHDFSIntoBuffer, this);
+    std::thread readerThread([this]() {
+            Utils::setThreadName("JG_HDFS_Reader");
+            this->streamFromHDFSIntoBuffer();
+        });
     std::vector<std::thread> bufferProcessorThreads;
 
     if (isEdgeListType) {
         for (int i = 0; i < Conts::HDFS::EDGE_SEPARATION_LAYER_THREAD_COUNT; ++i) {
-            bufferProcessorThreads.emplace_back(&HDFSStreamHandler::streamFromBufferToProcessingQueueEdgeListGraph,
-                this, std::ref(partitioner));
+            bufferProcessorThreads.emplace_back([this, i, &partitioner]() {
+                Utils::setThreadName("JG_HDFS_EdgeProc_" + std::to_string(i));
+                this->streamFromBufferToProcessingQueueEdgeListGraph(partitioner);
+            });
         }
     } else {
         for (int i = 0; i < Conts::HDFS::EDGE_SEPARATION_LAYER_THREAD_COUNT; ++i) {
-            bufferProcessorThreads.emplace_back(&HDFSStreamHandler::streamFromBufferToProcessingQueuePropertyGraph,
-                this, std::ref(partitioner));
+            bufferProcessorThreads.emplace_back([this, i, &partitioner]() {
+                Utils::setThreadName("JG_HDFS_PropProc_" + std::to_string(i));
+                this->streamFromBufferToProcessingQueuePropertyGraph(partitioner);
+            });
         }
     }
 

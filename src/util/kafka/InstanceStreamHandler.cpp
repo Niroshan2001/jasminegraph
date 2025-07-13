@@ -43,7 +43,10 @@ void InstanceStreamHandler::handleRequest(const std::string& nodeString) {
 
     std::unique_lock<std::mutex> lock(queue_mutexes[graphIdentifier]);  // Use specific mutex for the queue
     if (threads.find(graphIdentifier) == threads.end()) {
-        threads[graphIdentifier] = std::thread(&InstanceStreamHandler::threadFunction, this, nodeString);
+        threads[graphIdentifier] = std::thread([this, nodeString, graphIdentifier]() {
+            Utils::setThreadName("JG_Kafka_" + graphIdentifier);
+            this->threadFunction(nodeString);
+        });
         queues[graphIdentifier] = std::queue<std::string>();
     }
 

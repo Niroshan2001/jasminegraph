@@ -70,6 +70,7 @@ std::map<int, int> aggregateWeightMap;
 static int graphUploadWorkerTracker = 0;
 
 void *runfrontend(void *dummyPt) {
+    Utils::setThreadName("JG_Frontend");
     JasmineGraphServer *refToServer = (JasmineGraphServer *)dummyPt;
     refToServer->frontend = new JasmineGraphFrontEnd(refToServer->sqlite, refToServer->performanceSqlite,
                                                      refToServer->masterHost, refToServer->jobScheduler);
@@ -79,6 +80,7 @@ void *runfrontend(void *dummyPt) {
 }
 
 void *runuifrontend(void *dummyPt) {
+    Utils::setThreadName("JG_Frontend_UI");
     JasmineGraphServer *refToServer = (JasmineGraphServer *)dummyPt;
     refToServer->frontendUI = new JasmineGraphFrontEndUI(refToServer->sqlite, refToServer->performanceSqlite,
                                                         refToServer->masterHost, refToServer->jobScheduler);
@@ -728,7 +730,7 @@ void JasmineGraphServer::resolveOperationalGraphs() {
  *
  * @param graphID ID of graph fragments to be deleted
  */
-void JasmineGraphServer::deleteNonOperationalGraphFragment(int graphID) {
+void JasmineGraphServer::deleteNonOperationalFragment(int graphID) {
     server_logger.info("Deleting non-operational fragment " + to_string(graphID));
     int count = 0;
     // Define threads for each host
@@ -943,7 +945,7 @@ void JasmineGraphServer::uploadGraphLocally(int graphID, const string graphType,
                                 attributeFileMap[file_count], masterHost);
                 workerThreads[count++] =
                     std::thread(batchUploadCentralAttributeFile, worker.hostname, worker.port, worker.dataPort, graphID,
-                                centralStoreAttributeFileMap[file_count], masterHost);
+                                centralStoreAttributeFileMap[file_count], masterIP);
             }
             assignPartitionToWorker(partitionFileName, graphID, worker.hostname, worker.port);
             file_count++;
@@ -1221,8 +1223,7 @@ static bool removeFragmentThroughService(string host, int port, string graphID, 
         return false;
     }
 
-    if (!Utils::sendExpectResponse(sockfd, data, INSTANCE_DATA_LENGTH,
-                                   JasmineGraphInstanceProtocol::DELETE_GRAPH_FRAGMENT,
+    if (!Utils::sendExpectResponse(sockfd, data, INSTANCE_DATA_LENGTH, JasmineGraphInstanceProtocol::DELETE_GRAPH_FRAGMENT,
                                    JasmineGraphInstanceProtocol::OK)) {
         Utils::send_str_wrapper(sockfd, JasmineGraphInstanceProtocol::CLOSE);
         close(sockfd);
@@ -1611,9 +1612,10 @@ void JasmineGraphServer::duplicateCentralStore(std::string graphID) {
         for (std::vector<std::string>::iterator partitionit = workerPartition.partitionID.begin();
              partitionit != workerPartition.partitionID.end(); partitionit++) {
             std::string partition = *partitionit;
-            workerList.append(host + ":" + std::to_string(port) + ":" + partition + ":" + to_string(dport) + ",");
+            workerList.append(host + ":" + ":" + to_string(port) + ":" + partition + ",");
         }
     }
+
     workerList.pop_back();
 
     int sockfd;

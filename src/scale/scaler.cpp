@@ -55,6 +55,9 @@ void stop_scale_down() {
 }
 
 static void scale_down_thread_fn() {
+    // Set meaningful thread name for VTune profiling
+    Utils::setThreadName("JG_ScaleDown");
+
     while (running) {
         sleep(30);
         if (!running) break;

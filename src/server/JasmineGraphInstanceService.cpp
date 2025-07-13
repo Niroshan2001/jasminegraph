@@ -25,6 +25,7 @@ limitations under the License.
 #include "../query/algorithms/triangles/StreamingTriangles.h"
 #include "../query/processor/cypher/runtime/InstanceHandler.h"
 #include "../server/JasmineGraphServer.h"
+#include "../util/Utils.h"
 #include "../util/kafka/InstanceStreamHandler.h"
 #include "../util/logger/Logger.h"
 #include "JasmineGraphInstance.h"
@@ -335,7 +336,10 @@ void JasmineGraphInstanceService::run(string masterHost, string host, int server
     std::map<std::string, JasmineGraphHashMapDuplicateCentralStore> graphDBMapDuplicateCentralStores;
     std::map<std::string, JasmineGraphIncrementalLocalStore *> incrementalLocalStore;
 
-    std::thread perfThread = std::thread(&PerformanceUtil::collectPerformanceStatistics);
+    std::thread perfThread = std::thread([]() {
+        Utils::setThreadName("JG_PerfStats_Worker");
+        PerformanceUtil::collectPerformanceStatistics();
+    });
     perfThread.detach();
 
     instance_logger.info("Worker listening on port " + to_string(serverPort));
@@ -708,9 +712,12 @@ void JasmineGraphInstanceService::collectTrainedModels(
         JasmineGraphInstanceService::workerPartitions workerPartitions = mapIterator->second;
         std::vector<std::string>::iterator it;
         for (it = workerPartitions.partitionID.begin(); it != workerPartitions.partitionID.end(); it++) {
-            workerThreads[count] =
-                std::thread(&JasmineGraphInstanceService::collectTrainedModelThreadFunction, sessionargs, hostName,
-                            workerPartitions.port, workerPartitions.dataPort, graphID, *it);
+            string partitionID = *it;
+            workerThreads[count] = std::thread([sessionargs, hostName, workerPartitions, graphID, partitionID]() {
+                Utils::setThreadName("JG_CollectModel_" + partitionID);
+                JasmineGraphInstanceService::collectTrainedModelThreadFunction(sessionargs, hostName, workerPartitions.port, 
+                                                                              workerPartitions.dataPort, graphID, partitionID);
+            });
             count++;
         }
     }
@@ -857,6 +864,9 @@ int JasmineGraphInstanceService::collectTrainedModelThreadFunction(instanceservi
 
 void JasmineGraphInstanceService::createPartitionFiles(std::string graphID, std::string partitionID,
                                                        std::string fileType) {
+    // Set meaningful thread name for VTune profiling
+    Utils::setThreadName("JG_CreatePartition_" + fileType + "_" + partitionID);
+    
     string inputFilePath = Utils::getJasmineGraphProperty("org.jasminegraph.server.instance.datafolder") + "/" +
                            graphID + "_" + partitionID;
     string outputFilePath = Utils::getJasmineGraphProperty("org.jasminegraph.server.instance.trainedmodelfolder") +
@@ -928,7 +938,10 @@ void JasmineGraphInstanceService::executeTrainingIterations(int maxThreads) {
 
         for (auto trainarg = partVector.begin(); trainarg != partVector.end(); ++trainarg) {
             string trainData = *trainarg;
-            threadList[count] = std::thread(trainPartition, trainData);
+            threadList[count] = std::thread([trainData, count]() {
+                Utils::setThreadName("JG_TrainPartition_" + std::to_string(count));
+                JasmineGraphInstanceService::trainPartition(trainData);
+            });
             count++;
         }
         iterCounter++;
@@ -2908,7 +2921,10 @@ static void triangles_command(
         threadPriorityMutex.unlock();
     }
 
-    std::thread perfThread = std::thread(&PerformanceUtil::collectPerformanceStatistics);
+    std::thread perfThread = std::thread([]() {
+        Utils::setThreadName("JG_PerfStats_Triangle");
+        PerformanceUtil::collectPerformanceStatistics();
+    });
     perfThread.detach();
     long localCount = countLocalTriangles(graphID, partitionId, graphDBMapLocalStores, graphDBMapCentralStores,
                                           graphDBMapDuplicateCentralStores, threadPriority);
@@ -4257,7 +4273,10 @@ static void query_start_command(int connFd, InstanceHandler &instanceHandler, st
         return;
     }
 
-    std::thread perfThread = std::thread(&PerformanceUtil::collectPerformanceStatistics);
+    std::thread perfThread = std::thread([]() {
+        Utils::setThreadName("JG_PerfStats_Incremental");
+        PerformanceUtil::collectPerformanceStatistics();
+    });
     perfThread.detach();
 
     JasmineGraphIncrementalLocalStore * incrementalLocalStoreInstance;
