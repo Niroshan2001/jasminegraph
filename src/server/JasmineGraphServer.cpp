@@ -65,7 +65,7 @@ static size_t getWorkerCount();
 
 static std::vector<JasmineGraphServer::worker> hostWorkerList;
 static unordered_map<string, pair<int, int>> hostPortMap;
-std::map<int, int> aggregateWeightMap;
+std::unordered_map<int, int> aggregateWeightMap;  // Changed from std::map to std::unordered_map
 
 static int graphUploadWorkerTracker = 0;
 
@@ -559,7 +559,7 @@ void JasmineGraphServer::resolveOperationalGraphs() {
         "SELECT partition_graph_idgraph,partition_idpartition,worker_idworker FROM worker_has_partition ORDER BY "
         "worker_idworker";
     std::vector<vector<pair<string, string>>> output = this->sqlite->runSelect(sqlStatement);
-    std::map<int, vector<string>> partitionMap;
+    std::unordered_map<int, vector<string>> partitionMap;  // Changed to unordered_map
 
     for (auto i = output.begin(); i != output.end(); ++i) {
         int workerID = -1;
@@ -572,27 +572,31 @@ void JasmineGraphServer::resolveOperationalGraphs() {
         ++j;
         workerID = std::stoi(j->second);
         std::vector<string> &partitionList = partitionMap[workerID];
+        partitionList.reserve(10);  // Reserve space to avoid frequent reallocations
         partitionList.push_back(graphID + "_" + partitionID);
     }
 
     int RECORD_AGGREGATION_FREQUENCY = 5;
     int counter = 0;
     std::stringstream ss;
-    std::map<int, vector<string>> partitionAggregatedMap;
-    for (map<int, vector<string>>::iterator it = partitionMap.begin(); it != partitionMap.end(); ++it) {
+    std::unordered_map<int, vector<string>> partitionAggregatedMap;  // Changed to unordered_map
+    for (auto it = partitionMap.begin(); it != partitionMap.end(); ++it) {  // Use auto instead of explicit iterator
         int len = (it->second).size();
         int workerID = it->first;
 
-        for (std::vector<string>::iterator x = (it->second).begin(); x != (it->second).end(); ++x) {
+        for (const auto& x : it->second) {  // Use range-based for loop instead of iterators
             if (counter >= RECORD_AGGREGATION_FREQUENCY) {
                 std::vector<string> &partitionList = partitionAggregatedMap[workerID];
                 string data = ss.str();
-                std::stringstream().swap(ss);
+                ss.str("");  // More efficient than stringstream().swap(ss)
+                ss.clear();
                 counter = 0;
-                data = data.substr(0, data.find_last_of(","));
-                partitionList.push_back(data);
+                if (!data.empty() && data.back() == ',') {
+                    data.pop_back();  // More efficient than substr + find_last_of
+                }
+                partitionList.push_back(std::move(data));  // Use move semantics
             }
-            ss << x->c_str() << ",";
+            ss << x << ",";  // Removed unnecessary c_str() call
             counter++;
         }
 
@@ -819,19 +823,21 @@ int JasmineGraphServer::shutdown_worker(std::string workerIP, int port) {
     return 0;
 }
 
-static map<string, float> scaleK8s(size_t npart) {
+static unordered_map<string, float> scaleK8s(size_t npart) {  // Changed to unordered_map
     std::vector<JasmineGraphServer::worker> &workerList = K8sWorkerController::workerList;
-    const map<string, string> &cpu_map = Utils::getMetricMap("cpu_usage");
+    const unordered_map<string, string> &cpu_map = Utils::getMetricMap("cpu_usage");  // Assuming Utils returns unordered_map
     // Convert strings to float
-    map<string, float> cpu_loads;
-    for (auto it = cpu_map.begin(); it != cpu_map.end(); it++) {
-        cpu_loads[it->first] = (float)atof(it->second.c_str());
+    unordered_map<string, float> cpu_loads;  // Changed to unordered_map
+    cpu_loads.reserve(cpu_map.size());  // Reserve space to avoid rehashing
+    for (const auto& pair : cpu_map) {  // Use range-based for loop
+        cpu_loads[pair.first] = std::stof(pair.second);  // Use stof instead of atof for better performance
     }
 
-    for (auto it = workerList.begin(); it != workerList.end(); it++) {
-        auto &worker = *it;
+    for (const auto& worker : workerList) {  // Use range-based for loop
         // 0.8 depends on num cpu cores and other factors
-        if (npart > 0 && cpu_loads[worker.hostname + ":" + to_string(worker.port)] < 0.8) npart--;
+        string workerKey = worker.hostname + ":" + to_string(worker.port);
+        auto it = cpu_loads.find(workerKey);  // Use find to avoid creating new entries
+        if (npart > 0 && it != cpu_loads.end() && it->second < 0.8) npart--;
     }
     if (npart <= 0) return cpu_loads;
     K8sWorkerController *controller = K8sWorkerController::getInstance();
@@ -892,14 +898,14 @@ std::vector<JasmineGraphServer::worker> JasmineGraphServer::workers(size_t npart
 }
 
 void JasmineGraphServer::uploadGraphLocally(int graphID, const string graphType,
-                                            vector<std::map<int, string>> fullFileList, std::string masterIP) {
+                                            vector<std::unordered_map<int, string>> fullFileList, std::string masterIP) {  // Changed to unordered_map
     server_logger.info("Uploading the graph locally..");
-    std::map<int, string> partitionFileMap = fullFileList[0];
-    std::map<int, string> centralStoreFileMap = fullFileList[1];
-    std::map<int, string> centralStoreDuplFileMap = fullFileList[2];
-    std::map<int, string> compositeCentralStoreFileMap = fullFileList[5];
-    std::map<int, string> attributeFileMap;
-    std::map<int, string> centralStoreAttributeFileMap;
+    std::unordered_map<int, string> partitionFileMap = fullFileList[0];  // Changed to unordered_map
+    std::unordered_map<int, string> centralStoreFileMap = fullFileList[1];  // Changed to unordered_map
+    std::unordered_map<int, string> centralStoreDuplFileMap = fullFileList[2];  // Changed to unordered_map
+    std::unordered_map<int, string> compositeCentralStoreFileMap = fullFileList[5];  // Changed to unordered_map
+    std::unordered_map<int, string> attributeFileMap;  // Changed to unordered_map
+    std::unordered_map<int, string> centralStoreAttributeFileMap;  // Changed to unordered_map
     if (masterHost.empty()) {
         masterHost = Utils::getJasmineGraphProperty("org.jasminegraph.server.host");
     }
@@ -1342,8 +1348,9 @@ void JasmineGraphServer::updateOperationalGraphList() {
     this->sqlite->runUpdate(sqlStatement2);
 }
 
-std::map<string, JasmineGraphServer::workerPartitions> JasmineGraphServer::getGraphPartitionedHosts(string graphID) {
+std::unordered_map<string, JasmineGraphServer::workerPartitions> JasmineGraphServer::getGraphPartitionedHosts(string graphID) {  // Changed to unordered_map
     vector<pair<string, string>> hostHasPartition;
+    hostHasPartition.reserve(100);  // Reserve space to avoid frequent reallocations
     auto *refToSqlite = new SQLiteDBInterface();
     refToSqlite->init();
     vector<vector<pair<string, string>>> hostPartitionResults = refToSqlite->runSelect(
@@ -1352,38 +1359,24 @@ std::map<string, JasmineGraphServer::workerPartitions> JasmineGraphServer::getGr
         graphID + "'");
     refToSqlite->finalize();
     delete refToSqlite;
-    for (auto i = hostPartitionResults.begin(); i != hostPartitionResults.end(); ++i) {
-        int count = 0;
-        string hostname;
-        string partitionID;
-        for (std::vector<pair<string, string>>::iterator j = (i->begin()); j != i->end(); ++j) {
-            if (count == 0) {
-                hostname = j->second;
-            } else {
-                partitionID = j->second;
-                hostHasPartition.push_back(pair<string, string>(hostname, partitionID));
-            }
-            count++;
+    
+    for (const auto& row : hostPartitionResults) {  // Use range-based for loop
+        if (row.size() >= 2) {  // Safety check
+            const string& hostname = row[0].second;
+            const string& partitionID = row[1].second;
+            hostHasPartition.emplace_back(hostname, partitionID);  // Use emplace_back for efficiency
         }
     }
 
-    map<string, vector<string>> hostPartitions;
-    for (auto j = hostHasPartition.begin(); j != hostHasPartition.end(); ++j) {
-        string hostname = j->first;
-        auto it = hostPartitions.find(hostname);
-        if (it != hostPartitions.end()) {
-            it->second.push_back(j->second);
-        } else {
-            vector<string> vec;
-            vec.push_back(j->second);
-            hostPartitions[hostname] = vec;
-        }
+    unordered_map<string, vector<string>> hostPartitions;  // Changed to unordered_map
+    for (const auto& pair : hostHasPartition) {  // Use range-based for loop
+        const string& hostname = pair.first;
+        hostPartitions[hostname].push_back(pair.second);  // operator[] will create vector if doesn't exist
     }
 
-    map<string, JasmineGraphServer::workerPartitions> graphPartitionedHosts;
-    for (map<string, vector<string>>::iterator it = hostPartitions.begin(); it != hostPartitions.end(); ++it) {
-        graphPartitionedHosts[it->first] = {getPortByHost(it->first), getDataPortByHost(it->first),
-                                            hostPartitions[it->first]};
+    unordered_map<string, JasmineGraphServer::workerPartitions> graphPartitionedHosts;  // Changed to unordered_map
+    for (const auto& pair : hostPartitions) {  // Use range-based for loop
+        graphPartitionedHosts[pair.first] = {getPortByHost(pair.first), getDataPortByHost(pair.first), pair.second};
     }
 
     return graphPartitionedHosts;

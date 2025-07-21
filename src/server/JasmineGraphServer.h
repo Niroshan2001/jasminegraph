@@ -19,6 +19,7 @@ limitations under the License.
 
 #include <iostream>
 #include <map>
+#include <unordered_map>  // Added for unordered_map optimization
 #include <string>
 #include <thread>
 
@@ -88,7 +89,7 @@ class JasmineGraphServer {
     int run(std::string masterIp, int numberofWorkers, std::string workerIps, std::string enableNmon);
 
     void uploadGraphLocally(int graphID, const std::string graphType,
-                            std::vector<std::map<int, std::string>> fullFileList, std::string masterIP);
+                            std::vector<std::unordered_map<int, std::string>> fullFileList, std::string masterIP);  // Changed to unordered_map
     void sendQueryPlan(int graphID, int numberOfPartitions, string queryPlan,
                        std::vector<std::unique_ptr<SharedBuffer>>& bufferPool);
     static bool queryDataCommunicator(std::string host, int port, std::string masterIP,
@@ -136,7 +137,7 @@ class JasmineGraphServer {
 
     std::vector<JasmineGraphServer::worker> workers(size_t npart);
 
-    static std::map<std::string, workerPartitions> getGraphPartitionedHosts(std::string graphID);
+    static std::unordered_map<std::string, workerPartitions> getGraphPartitionedHosts(std::string graphID);  // Changed to unordered_map
 
     static void inDegreeDistribution(std::string graphID);
 
