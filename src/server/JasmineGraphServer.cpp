@@ -888,16 +888,12 @@ std::vector<JasmineGraphServer::worker> JasmineGraphServer::workers(size_t npart
 }
 
 void JasmineGraphServer::uploadGraphLocally(int graphID, const string graphType,
-                                            vector<std::map<int, string>> fullFileList, std::string masterIP) {
+                                            vector<std::unordered_map<int, string>> fullFileList, std::string masterIP) {
     server_logger.info("Uploading the graph locally..");
-    std::unordered_map<int, string> partitionFileMap = 
-        std::unordered_map<int, string>(fullFileList[0].begin(), fullFileList[0].end());
-    std::unordered_map<int, string> centralStoreFileMap = 
-        std::unordered_map<int, string>(fullFileList[1].begin(), fullFileList[1].end());
-    std::unordered_map<int, string> centralStoreDuplFileMap = 
-        std::unordered_map<int, string>(fullFileList[2].begin(), fullFileList[2].end());
-    std::unordered_map<int, string> compositeCentralStoreFileMap = 
-        std::unordered_map<int, string>(fullFileList[5].begin(), fullFileList[5].end());
+    std::unordered_map<int, string> partitionFileMap = fullFileList[0];
+    std::unordered_map<int, string> centralStoreFileMap = fullFileList[1];
+    std::unordered_map<int, string> centralStoreDuplFileMap = fullFileList[2];
+    std::unordered_map<int, string> compositeCentralStoreFileMap = fullFileList[5];
     std::unordered_map<int, string> attributeFileMap;
     std::unordered_map<int, string> centralStoreAttributeFileMap;
     if (masterHost.empty()) {
@@ -906,9 +902,9 @@ void JasmineGraphServer::uploadGraphLocally(int graphID, const string graphType,
     int total_threads = partitionFileMap.size() + centralStoreFileMap.size() + centralStoreDuplFileMap.size() +
                         compositeCentralStoreFileMap.size();
     if (graphType == Conts::GRAPH_WITH_ATTRIBUTES) {
-        attributeFileMap = std::unordered_map<int, string>(fullFileList[3].begin(), fullFileList[3].end());
+        attributeFileMap = fullFileList[3];
         total_threads += attributeFileMap.size();
-        centralStoreAttributeFileMap = std::unordered_map<int, string>(fullFileList[4].begin(), fullFileList[4].end());
+        centralStoreAttributeFileMap = fullFileList[4];
         total_threads += centralStoreAttributeFileMap.size();
     }
     int count = 0;

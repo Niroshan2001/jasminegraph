@@ -201,7 +201,7 @@ int MetisPartitioner::constructMetisFormat(string graph_type) {
     return 1;
 }
 
-std::vector<std::map<int, std::string>> MetisPartitioner::partitioneWithGPMetis(string partitionCount) {
+std::vector<std::unordered_map<int, std::string>> MetisPartitioner::partitioneWithGPMetis(string partitionCount) {
     partitioner_logger.log("Partitioning with gpmetis", "info");
     if (partitionCount != "") {
         nParts = atoi(partitionCount.c_str());
@@ -302,7 +302,7 @@ std::vector<std::map<int, std::string>> MetisPartitioner::partitioneWithGPMetis(
         partitioner_logger.log("Popen error in executing gpmetis command", "error");
     }
 
-    return std::vector<std::map<int, std::string>>{};  // Return an empty vector in case of error
+    return std::vector<std::unordered_map<int, std::string>>{};  // Return an empty vector in case of error
 }
 
 void MetisPartitioner::createPartitionFiles(std::map<int, int> partMap) {

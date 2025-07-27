@@ -47,7 +47,7 @@ class MetisPartitioner {
     // void partitionGraph();
     int constructMetisFormat(string graph_type);
 
-    std::vector<std::map<int, std::string>> partitioneWithGPMetis(string partitionCount);
+        std::vector<std::unordered_map<int, std::string>> partitioneWithGPMetis(string partitionCount);
 
     // reformat the vertex list by mapping vertex values to new sequntial IDs
     std::string reformatDataSet(string inputFilePath, int graphID);
@@ -70,13 +70,13 @@ class MetisPartitioner {
     int smallestVertex = std::numeric_limits<int>::max();
     string graphAttributeType;
 
-    std::map<int, std::string> partitionFileMap;
-    std::map<int, std::string> centralStoreFileList;
-    std::map<int, std::string> compositeCentralStoreFileList;
-    std::map<int, std::string> centralStoreDuplicateFileList;
-    std::map<int, std::string> partitionAttributeFileList;
-    std::map<int, std::string> centralStoreAttributeFileList;
-    std::vector<std::map<int, std::string>> fullFileList;
+    std::unordered_map<int, std::string> partitionFileMap;
+    std::unordered_map<int, std::string> centralStoreFileList;
+    std::unordered_map<int, std::string> compositeCentralStoreFileList;
+    std::unordered_map<int, std::string> centralStoreDuplicateFileList;
+    std::unordered_map<int, std::string> partitionAttributeFileList;
+    std::unordered_map<int, std::string> centralStoreAttributeFileList;
+    std::vector<std::unordered_map<int, std::string>> fullFileList;
 
     std::map<int, std::vector<int>> graphStorageMap;
     std::map<int, std::vector<int>> graphEdgeMap;

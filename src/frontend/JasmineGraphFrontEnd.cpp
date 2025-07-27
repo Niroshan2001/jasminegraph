@@ -22,6 +22,7 @@ limitations under the License.
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <unordered_map>
 #include <nlohmann/json.hpp>
 #include <set>
 #include <thread>
@@ -641,7 +642,7 @@ static void add_rdf_command(std::string masterIP, int connFd, SQLiteDBInterface 
         appConfig.readConfigFile(path, newGraphID);
 
         MetisPartitioner metisPartitioner(sqlite);
-        vector<std::map<int, string>> fullFileList;
+        vector<std::unordered_map<int, string>> fullFileList;
         string input_file_path =
             Utils::getHomeDir() + "/.jasminegraph/tmp/" + to_string(newGraphID) + "/" + to_string(newGraphID);
         metisPartitioner.loadDataSet(input_file_path, newGraphID);
@@ -729,7 +730,7 @@ static void add_graph_command(std::string masterIP, int connFd, SQLiteDBInterfac
             to_string(Conts::GRAPH_STATUS::LOADING) + "\", \"\", \"\", \"\")";
         int newGraphID = sqlite->runInsert(sqlStatement);
         MetisPartitioner partitioner(sqlite);
-        vector<std::map<int, string>> fullFileList;
+        vector<std::unordered_map<int, string>> fullFileList;
 
         partitioner.loadDataSet(path, newGraphID);
         int result = partitioner.constructMetisFormat(Conts::GRAPH_TYPE_NORMAL);
@@ -900,7 +901,7 @@ static void add_graph_cust_command(std::string masterIP, int connFd, SQLiteDBInt
             to_string(Conts::GRAPH_STATUS::LOADING) + "\", \"\", \"\", \"\")";
         int newGraphID = sqlite->runInsert(sqlStatement);
         MetisPartitioner partitioner(sqlite);
-        vector<std::map<int, string>> fullFileList;
+        vector<std::unordered_map<int, string>> fullFileList;
         partitioner.loadContentData(attributeListPath, graphAttributeType, newGraphID, attrDataType);
         partitioner.loadDataSet(edgeListPath, newGraphID);
         int result = partitioner.constructMetisFormat(Conts::GRAPH_TYPE_NORMAL);

@@ -22,6 +22,7 @@ limitations under the License.
 #include <nlohmann/json.hpp>
 #include <set>
 #include <thread>
+#include <unordered_map>
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -483,7 +484,7 @@ static void add_graph_command(std::string masterIP,
             to_string(Conts::GRAPH_STATUS::LOADING) + "\", \"\", \"\", \"\")";
         int newGraphID = sqlite->runInsert(sqlStatement);
         MetisPartitioner partitioner(sqlite);
-        vector<std::map<int, string>> fullFileList;
+        vector<std::unordered_map<int, string>> fullFileList;
 
         partitioner.loadDataSet(path, newGraphID);
         int result = partitioner.constructMetisFormat(Conts::GRAPH_TYPE_NORMAL);
