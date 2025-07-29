@@ -891,6 +891,7 @@ std::string Utils::send_job(std::string job_group_name, std::string metric_name,
                               "| data: " + job_data);
         }
 
+        curl_slist_free_all(headers);
         curl_easy_cleanup(curl);
     }
     return response_string;
