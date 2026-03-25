@@ -26,7 +26,8 @@ class StreamHandler {
  public:
     StreamHandler(KafkaConnector *kstream, int numberOfPartitions,
                   std::vector<DataPublisher *> &workerClients, SQLiteDBInterface* sqlite,
-                  int graphId, bool isDirected, spt::Algorithms algo = spt::Algorithms::HASH);
+                  int graphId, bool isDirected, spt::Algorithms algo = spt::Algorithms::HASH,
+                  std::string dataFormat = "json");
     void listen_to_kafka_topic();
     cppkafka::Message pollMessage();
     bool isErrorInMessage(const cppkafka::Message &msg);
@@ -37,5 +38,6 @@ class StreamHandler {
     KafkaConnector *kstream;
     Logger frontend_logger;
     std::string stream_topic_name;
+    std::string dataFormat;
     std::vector<DataPublisher *> &workerClients;
 };

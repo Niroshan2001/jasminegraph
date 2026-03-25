@@ -227,7 +227,14 @@ void *frontendservicesesion(void *dummyPt) {
                 workerClientsInitialized = true;
             }
             add_stream_kafka_command(connFd, kafka_server_IP, configs, kstream, input_stream_handler, workerClients,
-                                     numberOfPartitions, sqlite, &loop_exit);
+                                     numberOfPartitions, sqlite, &loop_exit, "json");
+        } else if (line.compare(ADD_STREAM_KAFKA_CSV) == 0) {
+            if (!workerClientsInitialized) {
+                workerClients = getWorkerClients(sqlite);
+                workerClientsInitialized = true;
+            }
+            add_stream_kafka_command(connFd, kafka_server_IP, configs, kstream, input_stream_handler, workerClients,
+                                     numberOfPartitions, sqlite, &loop_exit, "csv");
         } else if (line.compare(ADD_STREAM_HDFS) == 0) {
             addStreamHDFSCommand(masterIP, connFd, hdfsServerIp, input_stream_handler, numberOfPartitions, sqlite,
                                  &loop_exit);
@@ -1289,7 +1296,7 @@ static void add_model_command(int connFd, SQLiteDBInterface *sqlite, bool *loop_
 static void add_stream_kafka_command(int connFd, std::string &kafka_server_IP, cppkafka::Configuration &configs,
                                      KafkaConnector *&kstream, thread &input_stream_handler_thread,
                                      vector<DataPublisher *> &workerClients, int numberOfPartitions,
-                                     SQLiteDBInterface *sqlite, bool *loop_exit_p) {
+                                     SQLiteDBInterface *sqlite, bool *loop_exit_p, std::string dataFormat) {
     string exist = "Do you want to stream into existing graph(y/n) ? ";
     int result_wr = write(connFd, exist.c_str(), exist.length());
     if (result_wr < 0) {
@@ -1572,7 +1579,7 @@ static void add_stream_kafka_command(int connFd, std::string &kafka_server_IP, c
     kstream->Subscribe(topic_name_s);
     // Create the StreamHandler object.
     StreamHandler *stream_handler = new StreamHandler(kstream, numberOfPartitions, workerClients, sqlite, stoi(graphId),
-                                                      direction == Conts::DIRECTED, spt::getPartitioner(partitionAlgo));
+                                                      direction == Conts::DIRECTED, spt::getPartitioner(partitionAlgo), dataFormat);
 
     if (existingGraph != "y") {
         string path = "kafka:\\" + topic_name_s + ":" + group_id;

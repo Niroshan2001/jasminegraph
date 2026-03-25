@@ -29,12 +29,13 @@ Logger stream_handler_logger;
 
 StreamHandler::StreamHandler(KafkaConnector *kstream, int numberOfPartitions,
                              vector<DataPublisher *> &workerClients, SQLiteDBInterface* sqlite,
-                             int graphId, bool isDirected, spt::Algorithms algorithms)
+                             int graphId, bool isDirected, spt::Algorithms algorithms, std::string dataFormat)
         : kstream(kstream),
           graphId(graphId),
           workerClients(workerClients),
           graphPartitioner(numberOfPartitions, graphId, algorithms, sqlite, isDirected),
-          stream_topic_name("stream_topic_name") { }
+          stream_topic_name("stream_topic_name"),
+          dataFormat(dataFormat) { }
 
 
 // Polls kafka for a message.
@@ -87,14 +88,35 @@ void StreamHandler::listen_to_kafka_topic() {
             continue;
         }
         string data(msg.get_payload());
-        auto edgeJson = json::parse(data);
+        
+        json sourceJson;
+        json destinationJson;
+        json prop = json::object();
+        string sId;
+        string dId;
+        
+        if (this->dataFormat == "csv") {
+            vector<string> parts = Utils::split(data, ',');
+            if (parts.size() < 2) {
+                frontend_logger.error("Invalid CSV format: " + data);
+                continue;
+            }
+            sId = parts[0];
+            dId = parts[1];
+            sourceJson["id"] = sId;
+            destinationJson["id"] = dId;
+        } else {
+            auto edgeJson = json::parse(data);
+            if (edgeJson.contains("properties")) {
+                prop = edgeJson["properties"];
+            }
+            sourceJson = edgeJson["source"];
+            destinationJson = edgeJson["destination"];
+            sId = std::string(sourceJson["id"]);
+            dId = std::string(destinationJson["id"]);
+        }
 
-        auto prop = edgeJson["properties"];
         prop["graphId"] = to_string(this->graphId);
-        auto sourceJson = edgeJson["source"];
-        auto destinationJson = edgeJson["destination"];
-        string sId = std::string(sourceJson["id"]);
-        string dId = std::string(destinationJson["id"]);
         partitionedEdge partitionedEdge = graphPartitioner.addEdge({sId, dId});
         sourceJson["pid"] = partitionedEdge[0].second;
         destinationJson["pid"] = partitionedEdge[1].second;
