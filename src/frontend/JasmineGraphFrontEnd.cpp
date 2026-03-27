@@ -247,7 +247,7 @@ void *frontendservicesesion(void *dummyPt) {
             add_model_command(connFd, sqlite, &loop_exit);
         } else if (line.compare(ADGR_CUST) == 0) {
             add_graph_cust_command(masterIP, connFd, sqlite, &loop_exit);
-        } else if (line.compare(ADD_STREAM_KAFKA) == 0) {
+        } else if (line.compare(ADD_STREAM_KAFKA) == 0 || line.compare(ADD_STREAM_KAFKA_CSV) == 0) {
             if (!workerClientsInitialized) {
                 workerClients = getWorkerClients(sqlite);
                 workerClientsInitialized = true;

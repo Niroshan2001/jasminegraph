@@ -16,7 +16,7 @@ services:
     networks:
       jasminenet:
         ipv4_address: 172.28.5.7
-    command: --MODE 1 --MASTERIP 172.28.5.1 --WORKERS 2 --WORKERIP 172.28.5.1 --ENABLE_NMON false
+    command: --MODE 1 --MASTERIP 172.28.5.1 --WORKERS 8 --WORKERIP 172.28.5.1 --ENABLE_NMON false
     depends_on:
       - prometheus
       - kafka
@@ -58,7 +58,7 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_NUM_PARTITIONS: 8
       CLUSTER_ID: ciWo7IWazngRchmPES6q5A==
     networks:
       jasminenet:
