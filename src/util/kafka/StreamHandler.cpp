@@ -21,6 +21,7 @@ limitations under the License.
 #include <stdlib.h>
 #include <sys/socket.h>
 #include <netdb.h>
+#include <arpa/inet.h>
 #include <unistd.h>
 #include <sys/stat.h>
 
@@ -31,6 +32,7 @@ limitations under the License.
 #include "../../temporalstore/TemporalStorePersistence.h"
 #include "../telemetry/OpenTelemetryUtil.h"
 #include "WorkerKafkaConsumer.h"
+#include "EdgeRouter.h"
 
 using json = nlohmann::json;
 using namespace std;
@@ -896,11 +898,22 @@ void StreamHandler::listen_to_kafka_topic() {
     streamHandlerLogger().info("Starting " + std::to_string(numConsumerThreads) +
                                " parallel Kafka consumer threads for topic '" + topic + "'");
 
-    // For HASH partitioning: workers consume directly from Kafka (eliminates master relay bottleneck)
+    // For HASH partitioning: Check if router mode is enabled
     if (graphPartitioner.isHashAlgorithm()) {
-        streamHandlerLogger().info("Hash partitioning detected: dispatching direct Kafka consuming to workers");
-        listenViaDirectWorkers(topic, workers);
-        return;
+        std::string routerEnabledProp = Utils::getJasmineGraphProperty(
+            "org.jasminegraph.streaming.router.enabled");
+        bool routerEnabled = (routerEnabledProp == "true") || (routerEnabledProp == "1");
+
+        if (routerEnabled) {
+            streamHandlerLogger().info("Hash partitioning detected with router mode ENABLED: "
+                                      "using dedicated edge router pattern");
+            listenViaEdgeRouter(topic, workers);
+            return;
+        } else {
+            streamHandlerLogger().info("Hash partitioning detected: dispatching direct Kafka consuming to workers");
+            listenViaDirectWorkers(topic, workers);
+            return;
+        }
     }
 
     // Shared state for all consumer threads
@@ -1228,5 +1241,203 @@ void StreamHandler::listenViaDirectWorkers(
     // Update partition metadata DB now (does not require streaming to be complete).
     graphPartitioner.updateMetaDB();
     graphPartitioner.printStats();
+    kstream->Unsubscribe();
+}
+
+// ============================================================================
+// NEW: listenViaEdgeRouter() — Dedicated Router Pattern
+// ============================================================================
+// Optimized streaming path for HASH-partitioned graphs:
+// - Dedicated router consumes once from Kafka (50% bandwidth savings)
+// - Router hashes edges and routes to workers (no fan-out overhead)
+// - Workers receive only relevant edges (no filtering needed)
+// - Lower lock contention, better utilization of worker CPU
+//
+void StreamHandler::listenViaEdgeRouter(
+        const std::string& topic,
+        const std::vector<JasmineGraphServer::worker>& workers) {
+    const int n_workers = static_cast<int>(workers.size());
+    if (n_workers <= 0) {
+        streamHandlerLogger().error("[EdgeRouter] No workers available for routing");
+        return;
+    }
+
+    streamHandlerLogger().info("[EdgeRouter] Dedicated consumer mode enabled: single consumer dispatching to " +
+                               std::to_string(n_workers) + " workers");
+
+    std::atomic<uint64_t> totalMessages{0};
+    std::atomic<uint64_t> totalLocal{0};
+    std::atomic<uint64_t> totalCentral{0};
+
+    const size_t KAFKA_BATCH_SIZE = 2000;
+    const uint64_t MAX_EMPTY_POLLS = 60;
+    uint64_t emptyPolls = 0;
+    std::atomic<bool> endSignalReceived{false};
+    std::hash<std::string> hasher;
+
+    while (!endSignalReceived) {
+        auto messageBatch = kstream->consumer.poll_batch(KAFKA_BATCH_SIZE, std::chrono::milliseconds(1000));
+
+        if (messageBatch.empty()) {
+            emptyPolls++;
+            if (totalMessages.load() > 0 && emptyPolls >= MAX_EMPTY_POLLS) {
+                streamHandlerLogger().warn("[EdgeRouter] idle timeout after processing " +
+                                           std::to_string(totalMessages.load()) + " messages");
+                break;
+            }
+            continue;
+        }
+        emptyPolls = 0;
+
+        for (auto& msg : messageBatch) {
+            if (isEndOfStream(msg)) {
+                endSignalReceived = true;
+                continue;
+            }
+            if (isErrorInMessage(msg)) {
+                continue;
+            }
+
+            std::string data(msg.get_payload());
+            json edgeJson;
+            std::string parseError;
+            if (!normalizeKafkaPayloadToEdgeJson(data, csvInputMode, edgeJson, parseError)) {
+                if (!parseError.empty()) {
+                    streamHandlerLogger().warn("[EdgeRouter] payload parse failed: " + parseError);
+                }
+                continue;
+            }
+
+            auto prop = edgeJson["properties"];
+            prop["graphId"] = std::to_string(this->graphId);
+            auto sourceJson = edgeJson["source"];
+            auto destinationJson = edgeJson["destination"];
+            std::string sId = std::string(sourceJson["id"]);
+            std::string dId = std::string(destinationJson["id"]);
+
+            int part_s = static_cast<int>(hasher(sId) % numberOfPartitions);
+            int part_d = static_cast<int>(hasher(dId) % numberOfPartitions);
+
+            sourceJson["pid"] = part_s;
+            destinationJson["pid"] = part_d;
+            json obj;
+            obj["source"] = sourceJson;
+            obj["destination"] = destinationJson;
+            obj["properties"] = prop;
+
+            long temp_s = part_s % n_workers;
+            long temp_d = part_d % n_workers;
+
+            bool shouldCreateGlobalSnapshot = false;
+            if (!localTemporalStores.empty()) {
+                try {
+                    std::lock_guard<std::mutex> tlock(temporalMutex_);
+                    if (part_s == part_d) {
+                        if (localTemporalStores.find(part_s) != localTemporalStores.end()) {
+                            localTemporalStores[part_s]->addEdge(sId, dId, globalSnapshotId);
+                            totalLocal++;
+                            if (localTemporalStores[part_s]->shouldCreateSnapshot()) {
+                                shouldCreateGlobalSnapshot = true;
+                            }
+                        }
+                    } else if (centralTemporalStore != nullptr) {
+                        centralTemporalStore->addEdge(sId, dId, globalSnapshotId);
+                        totalCentral++;
+                        if (centralTemporalStore->shouldCreateSnapshot()) {
+                            shouldCreateGlobalSnapshot = true;
+                        }
+                    }
+                } catch (const std::exception& e) {
+                    streamHandlerLogger().error("[EdgeRouter] temporal update failed: " + std::string(e.what()));
+                }
+
+                if (shouldCreateGlobalSnapshot) {
+                    std::lock_guard<std::mutex> slock(snapshotMutex_);
+                    if ((centralTemporalStore && centralTemporalStore->shouldCreateSnapshot()) ||
+                        (!localTemporalStores.empty() && localTemporalStores.begin()->second->shouldCreateSnapshot())) {
+                        createGlobalSnapshot();
+                    }
+                }
+            }
+
+            if (part_s == part_d) {
+                obj["EdgeType"] = "Local";
+                obj["PID"] = part_s;
+                std::string localEdgeData = obj.dump();
+                {
+                    std::unique_lock<std::mutex> lock(*workerBatchMutexes[temp_s]);
+                    workerBatches[temp_s].push_back(localEdgeData);
+                    size_t batchSize = workerBatches[temp_s].size();
+                    lock.unlock();
+                    if (batchSize >= BATCH_SIZE) {
+                        flushWorkerBatch(temp_s, false);
+                    }
+                }
+            } else {
+                obj["EdgeType"] = "Central";
+                obj["PID"] = part_s;
+                std::string centralEdgeData_s = obj.dump();
+
+                std::string centralEdgeData_d = centralEdgeData_s;
+                std::string pidOld = "\"PID\":" + std::to_string(part_s);
+                std::string pidNew = "\"PID\":" + std::to_string(part_d);
+                auto pos = centralEdgeData_d.find(pidOld);
+                if (pos != std::string::npos) {
+                    centralEdgeData_d.replace(pos, pidOld.size(), pidNew);
+                }
+
+                {
+                    std::unique_lock<std::mutex> lock(*workerBatchMutexes[temp_s]);
+                    workerBatches[temp_s].push_back(centralEdgeData_s);
+                    size_t batchSize = workerBatches[temp_s].size();
+                    lock.unlock();
+                    if (batchSize >= BATCH_SIZE) {
+                        flushWorkerBatch(temp_s, false);
+                    }
+                }
+                {
+                    std::unique_lock<std::mutex> lock(*workerBatchMutexes[temp_d]);
+                    workerBatches[temp_d].push_back(centralEdgeData_d);
+                    size_t batchSize = workerBatches[temp_d].size();
+                    lock.unlock();
+                    if (batchSize >= BATCH_SIZE) {
+                        flushWorkerBatch(temp_d, false);
+                    }
+                }
+            }
+
+            totalMessages++;
+        }
+    }
+
+    streamHandlerLogger().info("[EdgeRouter] Consumption finished. Total messages: " +
+                               std::to_string(totalMessages.load()) +
+                               " (local=" + std::to_string(totalLocal.load()) +
+                               ", central=" + std::to_string(totalCentral.load()) + ")");
+
+    for (size_t i = 0; i < workerBatches.size(); i++) {
+        flushWorkerBatch(i, true);
+    }
+
+    int waitCount = 0;
+    while (waitCount < 50) {
+        std::unique_lock<std::mutex> lock(queueMutex);
+        if (publishQueue.empty()) {
+            break;
+        }
+        lock.unlock();
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        waitCount++;
+    }
+
+    for (auto& workerClient : workerClients) {
+        if (workerClient != nullptr) {
+            workerClient->publish("-1");
+        }
+    }
+
+    graphPartitioner.updateMetaDB();
+    graphPartitioner.printStats();
+    finalizeAllSnapshots();
     kstream->Unsubscribe();
 }

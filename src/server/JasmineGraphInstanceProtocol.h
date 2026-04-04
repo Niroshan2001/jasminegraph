@@ -108,6 +108,9 @@ class JasmineGraphInstanceProtocol {
     static const string WORKER_DIRECT_KAFKA_STREAM;       // Master → Worker: start direct Kafka consumption
     static const string WORKER_DIRECT_KAFKA_STREAM_ACK;  // Worker → Master: acknowledged, starting
     static const string WORKER_DIRECT_KAFKA_DONE;        // Worker → Master: consumption finished
+    // Edge Router streaming (dedicated router dispatches edges to workers)
+    static const string ROUTER_SERVER_START;             // Master → Worker: start router server
+    static const string ROUTER_SERVER_START_ACK;         // Worker → Master: router server started
     static const string GRAPH_CSV_STREAM_START;
     static const string GRAPH_CSV_STREAM_START_ACK;
     static const string GRAPH_CSV_STREAM_C_length_ACK;

@@ -41,6 +41,8 @@ class StreamHandler {
     void listen_to_kafka_topic();
     void listenViaDirectWorkers(const std::string& topic,
                                  const std::vector<JasmineGraphServer::worker>& workers);
+    void listenViaEdgeRouter(const std::string& topic,
+                             const std::vector<JasmineGraphServer::worker>& workers);
     cppkafka::Message pollMessage();
     std::vector<cppkafka::Message> pollMessageBatch(size_t maxMessages = 500);
     bool isErrorInMessage(const cppkafka::Message &msg);

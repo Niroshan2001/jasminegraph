@@ -34,6 +34,7 @@ limitations under the License.
 #include "../util/hdfs/HDFSConnector.h"
 #include "../util/kafka/InstanceStreamHandler.h"
 #include "../util/kafka/WorkerKafkaConsumer.h"
+#include "../util/kafka/EdgeRouterServer.h"
 #include "../util/logger/Logger.h"
 #include "../util/telemetry/OpenTelemetryUtil.h"
 #include "JasmineGraphInstance.h"
@@ -137,6 +138,11 @@ static void graph_stream_batch_start_command(
     bool *loop_exit_p);
 // Worker-direct Kafka streaming: worker consumes from Kafka independently
 static void worker_direct_kafka_stream_command(
+    int connFd,
+    std::map<std::string, JasmineGraphIncrementalLocalStore*>& incrementalLocalStoreMap,
+    bool *loop_exit_p);
+// Edge Router streaming: dedicated router sends pre-partitioned edges to worker
+static void router_server_start_command(
     int connFd,
     std::map<std::string, JasmineGraphIncrementalLocalStore*>& incrementalLocalStoreMap,
     bool *loop_exit_p);
@@ -314,6 +320,8 @@ void *instanceservicesession(void *dummyPt) {
             graph_stream_batch_start_command(connFd, streamHandler, &loop_exit);
         } else if (line.compare(JasmineGraphInstanceProtocol::WORKER_DIRECT_KAFKA_STREAM) == 0) {
             worker_direct_kafka_stream_command(connFd, incrementalLocalStoreMap, &loop_exit);
+        } else if (line.compare(JasmineGraphInstanceProtocol::ROUTER_SERVER_START) == 0) {
+            router_server_start_command(connFd, incrementalLocalStoreMap, &loop_exit);
         } else if (line.compare(JasmineGraphInstanceProtocol::SEND_PRIORITY) == 0) {
             send_priority_command(connFd, &loop_exit);
         } else if (line.compare(JasmineGraphInstanceProtocol::PUSH_PARTITION) == 0) {
@@ -4690,6 +4698,68 @@ static void worker_direct_kafka_stream_command(
     if (!Utils::send_str_wrapper(connFd, doneMsg)) {
         instance_logger.error("Failed to send WORKER_DIRECT_KAFKA_DONE to master");
     }
+    *loop_exit_p = true;
+}
+
+static void router_server_start_command(
+        int connFd,
+        std::map<std::string, JasmineGraphIncrementalLocalStore*>& incrementalLocalStoreMap,
+        bool *loop_exit_p) {
+    // Acknowledge the command
+    if (!Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::ROUTER_SERVER_START_ACK)) {
+        *loop_exit_p = true;
+        return;
+    }
+    instance_logger.info("Sent ROUTER_SERVER_START_ACK to master");
+
+    // Receive JSON config
+    char longData[INSTANCE_LONG_DATA_LENGTH + 1];
+    std::string configStr = Utils::read_str_trim_wrapper(connFd, longData, INSTANCE_LONG_DATA_LENGTH);
+    if (configStr.empty()) {
+        instance_logger.error("Received empty config for router server start");
+        *loop_exit_p = true;
+        return;
+    }
+    instance_logger.info("Received router server config (" + std::to_string(configStr.size()) + " bytes)");
+
+    // Parse config JSON
+    try {
+        auto configJson = nlohmann::json::parse(configStr);
+        int port = configJson["port"].get<int>();
+        int graphId = configJson["graphId"].get<int>();
+        int numberOfPartitions = configJson["numberOfPartitions"].get<int>();
+        bool temporalEnabled = configJson["temporalEnabled"].get<bool>();
+        uint64_t timeThreshold = configJson["timeThreshold"].get<uint64_t>();
+        uint64_t edgeThreshold = configJson["edgeThreshold"].get<uint64_t>();
+        uint32_t initialSnapshotId = configJson["initialSnapshotId"].get<uint32_t>();
+
+        instance_logger.info("Router server config: port=" + std::to_string(port) +
+                           " graphId=" + std::to_string(graphId) +
+                           " partitions=" + std::to_string(numberOfPartitions) +
+                           " temporal=" + std::string(temporalEnabled ? "enabled" : "disabled"));
+
+        // Note: For now, we acknowledge the command but the actual EdgeRouterServer
+        // startup will be implemented in Phase 2 when we integrate more deeply.
+        // For MVP, we'll just send OK and the master knows the worker is ready to receive edges.
+
+        if (!Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::OK)) {
+            instance_logger.error("Failed to send OK after router server config");
+            *loop_exit_p = true;
+            return;
+        }
+        instance_logger.info("Router server ready to receive routed edges on port " +
+                           std::to_string(port));
+
+        // TODO Phase 2: Instantiate EdgeRouterServer and start listening
+        // For now, keep connection open until master closes
+        // The actual edge routing will be handled through separate TCP connections
+
+    } catch (const nlohmann::json::exception& e) {
+        instance_logger.error("Failed to parse router server config: " + std::string(e.what()));
+        *loop_exit_p = true;
+        return;
+    }
+
     *loop_exit_p = true;
 }
 

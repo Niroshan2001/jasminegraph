@@ -173,6 +173,8 @@ set(SOURCES src/backend/JasmineGraphBackend.cpp
         src/util/kafka/StreamHandler.cpp
         src/util/kafka/InstanceStreamHandler.cpp
         src/util/kafka/WorkerKafkaConsumer.cpp
+        src/util/kafka/EdgeRouter.cpp
+        src/util/kafka/EdgeRouterServer.cpp
         src/util/logger/Logger.cpp
         src/util/scheduler/SchedulerService.cpp
         src/util/telemetry/OpenTelemetryUtil.cpp
