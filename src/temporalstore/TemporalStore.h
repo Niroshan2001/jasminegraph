@@ -508,28 +508,23 @@ class TemporalStore {
         std::string filePath = TemporalStorePersistence::generateBitmapFilePath(
             baseDir, graphId_, partitionId_);
 
-        // Move the current window out in O(1) under lock, then persist outside the lock.
-        // This removes the expensive full-map copy and the second eviction pass.
-        decltype(edgeBitmaps_) windowBitmaps;
+        // Persist the full cumulative bitmap index so historical snapshots can be
+        // reconstructed correctly for commands like `histrian`.
+        decltype(edgeBitmaps_) snapshotBitmaps;
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            windowBitmaps.swap(edgeBitmaps_);
-            totalEdgesTracked_ = 0;
+            snapshotBitmaps = edgeBitmaps_;
         }
 
         bool saved = TemporalStorePersistence::saveBitmapIndex(
-            filePath, graphId_, partitionId_, closedSnapshotId, windowBitmaps);
+            filePath, graphId_, partitionId_, closedSnapshotId, snapshotBitmaps);
 
         if (!saved) {
-            // Restore data on failure to avoid dropping the in-memory window.
-            std::lock_guard<std::mutex> lock(mutex_);
-            edgeBitmaps_.insert(windowBitmaps.begin(), windowBitmaps.end());
-            totalEdgesTracked_ = edgeBitmaps_.size();
             return false;
         }
 
         if (savedEdgeCount != nullptr) {
-            *savedEdgeCount = windowBitmaps.size();
+            *savedEdgeCount = snapshotBitmaps.size();
         }
         return true;
     }

@@ -45,8 +45,8 @@ struct TemporalTriangleResult {
  * ALL triangles including those spanning multiple partitions.
  *
  * Algorithm:
- * 1. Load edges from all local partition snapshots at given snapshot ID
- * 2. Load edges from central store snapshot (cross-partition edges)
+ * 1. Load and merge active edges from snapshots [0..given snapshot ID] for all local partitions
+ * 2. Load and merge active edges from snapshots [0..given snapshot ID] for central stores
  * 3. Build merged adjacency map using Roaring bitmaps for efficiency
  * 4. Count triangles using SIMD-optimized bitmap intersections
  * 5. Return complete triangle count on merged graph
@@ -54,10 +54,10 @@ struct TemporalTriangleResult {
 class HistoryTriangles {
  public:
     /**
-     * Count triangles at a specific snapshot across all partitions
+    * Count triangles using cumulative active edges up to a specific snapshot across all partitions
      *
      * @param graphId Graph ID
-     * @param snapshotId Snapshot ID to query
+    * @param snapshotId Upper-bound snapshot ID to query (inclusive range [0..snapshotId])
      * @param snapshotDir Directory containing temporal snapshot files
      * @param timeThreshold Time threshold for snapshot creation (seconds)
      * @param edgeThreshold Edge count threshold for snapshot creation

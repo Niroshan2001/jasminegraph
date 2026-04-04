@@ -3457,9 +3457,7 @@ static void temporal_snapshot_command(int connFd, SQLiteDBInterface *sqlite, boo
         response << "Temporal Snapshots for Graph " << graphId << ":\n";
 
         // Read from _snapmeta.bin files (one per partition per graph).
-        // Collect unique snapshotId → (totalEdges, timestamp) from all partitions.
-        // We keep the FIRST occurrence of each snapshotId (they are globally
-        // synchronised, so all partitions share the same IDs).
+        // Aggregate totalEdges across ALL partitions for each snapshot ID.
         std::string graphPrefix = "graph" + std::to_string(graphId) + "_part";
         struct SnapInfo { uint64_t totalEdges; uint64_t timestamp; };
         std::map<uint32_t, SnapInfo> snapMap;  // snapshotId → info
@@ -3471,8 +3469,14 @@ static void temporal_snapshot_command(int connFd, SQLiteDBInterface *sqlite, boo
             std::string metaPath = snapshotDir + "/" + file;
             auto records = TemporalStorePersistence::readAllSnapmeta(metaPath);
             for (const auto& rec : records) {
-                if (snapMap.find(rec.snapshotId) == snapMap.end()) {
+                auto it = snapMap.find(rec.snapshotId);
+                if (it == snapMap.end()) {
                     snapMap[rec.snapshotId] = {rec.totalEdges, rec.timestamp};
+                } else {
+                    it->second.totalEdges += rec.totalEdges;
+                    if (rec.timestamp > it->second.timestamp) {
+                        it->second.timestamp = rec.timestamp;
+                    }
                 }
             }
         }
@@ -3612,10 +3616,9 @@ static void history_triangle_command(int connFd, SQLiteDBInterface *sqlite, bool
             frontend_logger.error(error);
         } else {
             std::stringstream response;
-            response << "Triangle count at snapshot " << snapshotId << ": " << result.triangleCount << "\n";
+            response << "Triangle count up to snapshot " << snapshotId << ": " << result.triangleCount << "\n";
             response << "Edges: " << result.totalEdges << "\n";
             response << "Unique nodes: " << result.uniqueNodes << "\n";
-            response << "Partitions processed: " << result.partitionsProcessed << "\n";
             response << "Time taken: " << result.durationMs << "ms\n";
 
             std::string responseStr = response.str();
@@ -3747,7 +3750,7 @@ static void history_triangle_timestamp_command(int connFd, SQLiteDBInterface *, 
         std::string timeStr = formatSnapshotTimestamp(snapshotTimestamps.at(closestSnapshotId));
         std::stringstream response;
         response << "Closest snapshot: " << closestSnapshotId << " (created: " << timeStr << ")\n";
-        response << "Triangle count: " << result.triangleCount << "\n";
+        response << "Triangle count up to snapshot: " << result.triangleCount << "\n";
         response << "Edges: " << result.totalEdges << "\n";
         response << "Unique nodes: " << result.uniqueNodes << "\n";
         response << "Partitions processed: " << result.partitionsProcessed << "\n";

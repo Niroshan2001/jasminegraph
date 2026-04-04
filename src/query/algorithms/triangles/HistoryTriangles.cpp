@@ -14,8 +14,48 @@ limitations under the License.
 #include "HistoryTriangles.h"
 
 #include <algorithm>
+#include <cctype>
 #include <set>
 #include <sstream>
+#include <unordered_set>
+
+#include "../../../util/Utils.h"
+
+namespace {
+bool tryExtractPartitionIdFromBitmapFile(const std::string& filename,
+                                         int graphId,
+                                         int& partitionIdOut) {
+    const std::string prefix = "graph" + std::to_string(graphId) + "_part";
+    const std::string suffix = "_bitmaps.ebm";
+
+    if (filename.rfind(prefix, 0) != 0) {
+        return false;
+    }
+
+    if (filename.size() <= prefix.size() + suffix.size()) {
+        return false;
+    }
+
+    if (filename.compare(filename.size() - suffix.size(), suffix.size(), suffix) != 0) {
+        return false;
+    }
+
+    const std::string partIdText =
+        filename.substr(prefix.size(), filename.size() - prefix.size() - suffix.size());
+    if (partIdText.empty()) {
+        return false;
+    }
+
+    for (char ch : partIdText) {
+        if (!std::isdigit(static_cast<unsigned char>(ch))) {
+            return false;
+        }
+    }
+
+    partitionIdOut = std::stoi(partIdText);
+    return true;
+}
+}  // namespace
 
 Logger history_triangle_logger;
 
@@ -35,11 +75,14 @@ TemporalTriangleResult HistoryTriangles::countTrianglesAtSnapshot(
     std::vector<TemporalStore::EdgeKey> allEdges;
     int partitionsProcessed = 0;
 
+    std::unordered_set<TemporalStore::EdgeKey, TemporalStore::EdgeKey::Hash> uniqueEdges;
+    std::set<int> loadedPartitionIds;
+
     // Phase 1: Load edges from LOCAL partition snapshots
     // Scan partition IDs 0..99 but don't break on first miss — some partitions
     // may be absent if workers didn't own them or if numbering has gaps.
-    history_triangle_logger.info("Loading local partition snapshots for graph " +
-                                std::to_string(graphId) + " at snapshot " +
+    history_triangle_logger.info("Loading cumulative local partition snapshots for graph " +
+                                std::to_string(graphId) + " up to snapshot " +
                                 std::to_string(snapshotId));
 
     int maxPartitionFound = -1;
@@ -52,14 +95,24 @@ TemporalTriangleResult HistoryTriangles::countTrianglesAtSnapshot(
 
         if (localStore.loadBitmapIndexFromDisk(filePath)) {
             partitionsProcessed++;
+            loadedPartitionIds.insert(partitionId);
             if (partitionId > maxPartitionFound) maxPartitionFound = partitionId;
 
-            // Extract edges at this snapshot
-            auto edgesAtSnapshot = localStore.getEdgesAtSnapshot(snapshotId);
-            allEdges.insert(allEdges.end(), edgesAtSnapshot.begin(), edgesAtSnapshot.end());
+            // Extract active edges from snapshot 0 up to snapshotId (inclusive).
+            size_t beforeLocal = allEdges.size();
+            for (uint64_t sid = 0; sid <= static_cast<uint64_t>(snapshotId); sid++) {
+                auto edgesAtSnapshot = localStore.getEdgesAtSnapshot(static_cast<uint32_t>(sid));
+                for (const auto& edge : edgesAtSnapshot) {
+                    if (uniqueEdges.insert(edge).second) {
+                        allEdges.push_back(edge);
+                    }
+                }
+            }
+            size_t addedUniqueEdges = allEdges.size() - beforeLocal;
 
             history_triangle_logger.info("Loaded local partition " + std::to_string(partitionId) +
-                                       ": " + std::to_string(edgesAtSnapshot.size()) + " edges");
+                                       ": " + std::to_string(addedUniqueEdges) +
+                                       " unique cumulative edges");
         } else if (partitionsProcessed > 0 && partitionId > maxPartitionFound + 5) {
             // Stop scanning after a reasonable gap past the last found partition
             break;
@@ -74,12 +127,11 @@ TemporalTriangleResult HistoryTriangles::countTrianglesAtSnapshot(
     //   - Old master path:        ID = numberOfPartitions
     //   - New worker-direct path: ID = numberOfPartitions + workerIndex (one per worker)
     // Scan a range to find all central stores from all workers.
-    history_triangle_logger.info("Loading central store snapshot(s) for graph " +
+    history_triangle_logger.info("Loading cumulative central store snapshot(s) for graph " +
                                 std::to_string(graphId));
 
     int centralStart = (partitionsProcessed > 0) ? partitionsProcessed : 1;
     size_t centralEdgesLoaded = 0;
-    int centralStoresFound = 0;
     for (int centralId = centralStart; centralId < centralStart + 20; centralId++) {
         std::string filePath = TemporalStorePersistence::generateBitmapFilePath(
             snapshotDir, graphId, centralId);
@@ -88,16 +140,68 @@ TemporalTriangleResult HistoryTriangles::countTrianglesAtSnapshot(
                                   SnapshotManager::SnapshotMode::HYBRID);
 
         if (centralStore.loadBitmapIndexFromDisk(filePath)) {
-            auto edgesAtSnapshot = centralStore.getEdgesAtSnapshot(snapshotId);
-            allEdges.insert(allEdges.end(), edgesAtSnapshot.begin(), edgesAtSnapshot.end());
-            centralEdgesLoaded += edgesAtSnapshot.size();
-            centralStoresFound++;
+            loadedPartitionIds.insert(centralId);
+            size_t beforeCentral = allEdges.size();
+            for (uint64_t sid = 0; sid <= static_cast<uint64_t>(snapshotId); sid++) {
+                auto edgesAtSnapshot = centralStore.getEdgesAtSnapshot(static_cast<uint32_t>(sid));
+                for (const auto& edge : edgesAtSnapshot) {
+                    if (uniqueEdges.insert(edge).second) {
+                        allEdges.push_back(edge);
+                    }
+                }
+            }
+            size_t addedUniqueEdges = allEdges.size() - beforeCentral;
+            centralEdgesLoaded += addedUniqueEdges;
 
             history_triangle_logger.info("Loaded central store (partition " +
                                        std::to_string(centralId) + "): " +
-                                       std::to_string(edgesAtSnapshot.size()) + " edges");
+                                       std::to_string(addedUniqueEdges) +
+                                       " unique cumulative edges");
             // Don't break: there may be multiple central stores from different workers
         }
+    }
+
+    // Phase 2b: Discover and load any additional stores not covered by the
+    // fixed local/central scan ranges (e.g., sparse/high partition IDs).
+    std::vector<std::string> snapshotFiles = Utils::getListOfFilesInDirectory(snapshotDir);
+    for (const auto& fileName : snapshotFiles) {
+        int discoveredPartitionId = -1;
+        if (!tryExtractPartitionIdFromBitmapFile(fileName, graphId, discoveredPartitionId)) {
+            continue;
+        }
+        if (loadedPartitionIds.find(discoveredPartitionId) != loadedPartitionIds.end()) {
+            continue;
+        }
+
+        std::string filePath = TemporalStorePersistence::generateBitmapFilePath(
+            snapshotDir, graphId, discoveredPartitionId);
+
+        TemporalStore discoveredStore(graphId, discoveredPartitionId, timeThreshold, edgeThreshold,
+                                      SnapshotManager::SnapshotMode::HYBRID);
+
+        if (!discoveredStore.loadBitmapIndexFromDisk(filePath)) {
+            continue;
+        }
+
+        partitionsProcessed++;
+        loadedPartitionIds.insert(discoveredPartitionId);
+
+        size_t beforeExtra = allEdges.size();
+        for (uint64_t sid = 0; sid <= static_cast<uint64_t>(snapshotId); sid++) {
+            auto edgesAtSnapshot = discoveredStore.getEdgesAtSnapshot(static_cast<uint32_t>(sid));
+            for (const auto& edge : edgesAtSnapshot) {
+                if (uniqueEdges.insert(edge).second) {
+                    allEdges.push_back(edge);
+                }
+            }
+        }
+        size_t addedUniqueEdges = allEdges.size() - beforeExtra;
+        centralEdgesLoaded += addedUniqueEdges;
+
+        history_triangle_logger.info("Loaded discovered store (partition " +
+                                   std::to_string(discoveredPartitionId) + "): " +
+                                   std::to_string(addedUniqueEdges) +
+                                   " unique cumulative edges");
     }
 
     result.centralEdges = centralEdgesLoaded;
