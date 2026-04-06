@@ -375,14 +375,22 @@ void EdgeRouter::consumerThreadFunc() {
                     continue;
                 }
 
-                ++validInBatch;
-                ++totalMessagesConsumed_;
-
                 // Extract payload (cppkafka::Buffer in this version has no empty())
                 if (!msg.get_payload()) {
                     continue;
                 }
                 std::string payload(msg.get_payload());
+
+                // End-of-stream marker is produced once per Kafka partition. Do not
+                // treat it as a parse failure or a routed edge.
+                if (trimCopy(payload) == "-1") {
+                    edgeRouterLogger().debug("[EdgeRouter::consumerThreadFunc] Received EOS marker from partition " +
+                                            std::to_string(msg.get_partition()));
+                    continue;
+                }
+
+                ++validInBatch;
+                ++totalMessagesConsumed_;
 
                 // Normalize to JSON edge format
                 json edgeJson;

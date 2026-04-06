@@ -1272,10 +1272,9 @@ void StreamHandler::listenViaEdgeRouter(
     const size_t KAFKA_BATCH_SIZE = 2000;
     const uint64_t MAX_EMPTY_POLLS = 60;
     uint64_t emptyPolls = 0;
-    std::atomic<bool> endSignalReceived{false};
     std::hash<std::string> hasher;
 
-    while (!endSignalReceived) {
+    while (true) {
         auto messageBatch = kstream->consumer.poll_batch(KAFKA_BATCH_SIZE, std::chrono::milliseconds(1000));
 
         if (messageBatch.empty()) {
@@ -1291,7 +1290,9 @@ void StreamHandler::listenViaEdgeRouter(
 
         for (auto& msg : messageBatch) {
             if (isEndOfStream(msg)) {
-                endSignalReceived = true;
+                // Do not stop on EOS immediately. A single consumer can own
+                // multiple Kafka partitions; stopping on first EOS can leave
+                // other partitions undrained.
                 continue;
             }
             if (isErrorInMessage(msg)) {
