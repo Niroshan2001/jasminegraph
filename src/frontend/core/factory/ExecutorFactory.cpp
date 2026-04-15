@@ -31,7 +31,7 @@ AbstractExecutor* ExecutorFactory::getExecutor(JobRequest jobRequest) {
         return new StreamingTriangleCountExecutor(this->sqliteDB, jobRequest);
     } else if (PAGE_RANK == jobRequest.getJobType()) {
         return new PageRankExecutor(this->sqliteDB, this->perfDB, jobRequest);
-    } else if (CYPHER == jobRequest.getJobType()) {
+    } else if (CYPHER == jobRequest.getJobType() || TMP_CYPHER == jobRequest.getJobType()) {
         return new CypherQueryExecutor(this->sqliteDB, this->perfDB, jobRequest);
     } else if (SEMANTIC_BEAM_SEARCH == jobRequest.getJobType()) {
         return new SemanticBeamSearchExecutor(this->sqliteDB, this->perfDB, jobRequest);

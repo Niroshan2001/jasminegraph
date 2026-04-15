@@ -92,7 +92,8 @@ std::mutex threadMapMutex;
 static void list_command(int connFd, SQLiteDBInterface *sqlite, bool *loop_exit_p);
 static void cypherCommand(std::string masterIP, int connFd, vector<DataPublisher *> &workerClients,
                           int numberOfPartitions, bool *loop_exit, SQLiteDBInterface *sqlite,
-                          PerformanceSQLiteDBInterface *perfSqlite, JobScheduler *jobScheduler);
+                          PerformanceSQLiteDBInterface *perfSqlite, JobScheduler *jobScheduler,
+                          const std::string &commandType = CYPHER);
 static void semanticBeamSearch(std::string masterIP, int connFd, vector<DataPublisher *> &workerClients,
                                int numberOfPartitions, bool *loop_exit, SQLiteDBInterface *sqlite,
                                PerformanceSQLiteDBInterface *perfSqlite, JobScheduler *jobScheduler);
@@ -461,7 +462,12 @@ void *frontendservicesesion(void *dummyPt) {
             workerClients = getWorkerClients(sqlite);
             workerClientsInitialized = true;
             cypherCommand(masterIP, connFd, workerClients, numberOfPartitions, &loop_exit, sqlite, perfSqlite,
-                          jobScheduler);
+                          jobScheduler, CYPHER);
+        } else if (line.compare(TMP_CYPHER) == 0) {
+            workerClients = getWorkerClients(sqlite);
+            workerClientsInitialized = true;
+            cypherCommand(masterIP, connFd, workerClients, numberOfPartitions, &loop_exit, sqlite, perfSqlite,
+                          jobScheduler, TMP_CYPHER);
         } else if (line.compare(SEMANTIC_BEAM_SEARCH) == 0) {
             workerClients = getWorkerClients(sqlite);
             workerClientsInitialized = true;
@@ -749,7 +755,8 @@ void *frontendservicesesion(std::string masterIP, int connFd, SQLiteDBInterface 
 
 static void cypherCommand(std::string masterIP, int connFd, vector<DataPublisher *> &workerClients,
                           int numberOfPartitions, bool *loop_exit, SQLiteDBInterface *sqlite,
-                          PerformanceSQLiteDBInterface *perfSqlite, JobScheduler *jobScheduler) {
+                          PerformanceSQLiteDBInterface *perfSqlite, JobScheduler *jobScheduler,
+                          const std::string &commandType) {
     string graphId = "Graph ID:";
     int result_wr = write(connFd, graphId.c_str(), graphId.length());
     if (result_wr < 0) {
@@ -787,7 +794,7 @@ static void cypherCommand(std::string masterIP, int connFd, vector<DataPublisher
     JobRequest jobDetails;
     int uid = JasmineGraphFrontEndCommon::getUid();
     jobDetails.setJobId(std::to_string(uid));
-    jobDetails.setJobType(CYPHER);
+    jobDetails.setJobType(commandType);
     jobDetails.addParameter(Conts::PARAM_KEYS::CYPHER_QUERY::QUERY_STRING, queryString);
 
     long graphSLA = -1;

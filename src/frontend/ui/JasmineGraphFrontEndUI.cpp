@@ -173,7 +173,7 @@ void *uifrontendservicesesion(void *dummyPt) {
             get_degree_command(connFd, line, numberOfPartitions, "_idd_",  &loop_exit);
         } else if (token.compare(OUT_DEGREE) == 0) {
             get_degree_command(connFd, line, numberOfPartitions, "_odd_",  &loop_exit);
-        } else if (token.compare(CYPHER) == 0) {
+        } else if (token.compare(CYPHER) == 0 || token.compare(TMP_CYPHER) == 0) {
             workerClients = getWorkerClients(sqlite);
             workerClientsInitialized = true;
             cypher_ast_command(connFd, workerClients, numberOfPartitions, &loop_exit, line);
