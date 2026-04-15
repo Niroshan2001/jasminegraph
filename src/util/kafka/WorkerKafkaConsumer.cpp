@@ -714,33 +714,36 @@ void WorkerKafkaConsumer::consumerThreadFunc(
             // dedicated per-partition processing thread.  This is critical
             // because NodeManager uses static thread_local fstream pointers –
             // the store MUST be created and used on the same thread.
-            if (part_s == part_d) {
-                // Local edge — both endpoints live in the same owned partition
-                obj["EdgeType"] = "Local";
-                obj["PID"]      = part_s;
-                streamHandler.handleRequest(std::move(obj),
-                                            graphIdStr + "_" + std::to_string(part_s));
-            } else {
-                // Central edge — may need to write to src's partition, dst's partition, or both
-                obj["EdgeType"] = "Central";
-
-                if (srcOwned && dstOwned) {
-                    // Both partitions owned: copy for src, move into dst
-                    json objSrc = obj;
-                    objSrc["PID"] = part_s;
-                    obj["PID"]    = part_d;
-                    streamHandler.handleRequest(std::move(objSrc),
-                                                graphIdStr + "_" + std::to_string(part_s));
-                    streamHandler.handleRequest(std::move(obj),
-                                                graphIdStr + "_" + std::to_string(part_d));
-                } else if (srcOwned) {
-                    obj["PID"] = part_s;
+            // In temporal mode, skip native incremental-store updates.
+            if (!cfg.temporalEnabled) {
+                if (part_s == part_d) {
+                    // Local edge — both endpoints live in the same owned partition
+                    obj["EdgeType"] = "Local";
+                    obj["PID"]      = part_s;
                     streamHandler.handleRequest(std::move(obj),
                                                 graphIdStr + "_" + std::to_string(part_s));
                 } else {
-                    obj["PID"] = part_d;
-                    streamHandler.handleRequest(std::move(obj),
-                                                graphIdStr + "_" + std::to_string(part_d));
+                    // Central edge — may need to write to src's partition, dst's partition, or both
+                    obj["EdgeType"] = "Central";
+
+                    if (srcOwned && dstOwned) {
+                        // Both partitions owned: copy for src, move into dst
+                        json objSrc = obj;
+                        objSrc["PID"] = part_s;
+                        obj["PID"]    = part_d;
+                        streamHandler.handleRequest(std::move(objSrc),
+                                                    graphIdStr + "_" + std::to_string(part_s));
+                        streamHandler.handleRequest(std::move(obj),
+                                                    graphIdStr + "_" + std::to_string(part_d));
+                    } else if (srcOwned) {
+                        obj["PID"] = part_s;
+                        streamHandler.handleRequest(std::move(obj),
+                                                    graphIdStr + "_" + std::to_string(part_s));
+                    } else {
+                        obj["PID"] = part_d;
+                        streamHandler.handleRequest(std::move(obj),
+                                                    graphIdStr + "_" + std::to_string(part_d));
+                    }
                 }
             }
 
