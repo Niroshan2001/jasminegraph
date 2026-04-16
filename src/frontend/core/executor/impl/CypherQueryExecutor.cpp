@@ -11,6 +11,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
  */
 #include <fstream>
+#include <unistd.h>
 #include <regex>
 #include <set>
 #include <algorithm>
@@ -157,6 +158,16 @@ uint64_t evaluateTemporalCount(const TemporalQueryPlan& plan,
     return static_cast<uint64_t>(distinctNodes.size());
 }
 
+bool writeLineToSocket(int connFd, const std::string& line) {
+    ssize_t result = write(connFd, line.c_str(), line.length());
+    if (result < 0) {
+        return false;
+    }
+    result = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                   Conts::CARRIAGE_RETURN_NEW_LINE.size());
+    return result >= 0;
+}
+
 bool writeTemporalQueryRows(int connFd,
                             const TemporalQueryPlan& plan,
                             const std::vector<std::pair<std::string, std::string>>& edges,
@@ -190,15 +201,6 @@ bool writeTemporalQueryRows(int connFd,
     return true;
 }
 
-bool writeLineToSocket(int connFd, const std::string& line) {
-    int result = write(connFd, line.c_str(), line.length());
-    if (result < 0) {
-        return false;
-    }
-    result = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
-                   Conts::CARRIAGE_RETURN_NEW_LINE.size());
-    return result >= 0;
-}
 
 std::string getTemporalSnapshotDirForCypher() {
     std::string configuredPath =
