@@ -865,6 +865,7 @@ static bool countHistoryTrianglesFromStagedBitmaps(SQLiteDBInterface* sqlite,
     long stagingMs = std::chrono::duration_cast<std::chrono::milliseconds>(stagedEnd - stagedStart).count();
 
     try {
+        auto overallStart = std::chrono::high_resolution_clock::now();
         result = HistoryTriangles::countTrianglesAtSnapshot(graphId, snapshotId, stagedSnapshotDir);
         result.stagingMs = stagingMs;
         dataSourceInfo = "Data source: staged-fallback (reason=" + localDirectFailureReason + ")";
@@ -5795,42 +5796,31 @@ static void history_pagerank_command(int connFd, SQLiteDBInterface *sqlite, bool
         }
 
         HistoryPageRankResult result;
-        // Try distributed approach first (worker-local computation, no centralized staging)
-        result = countHistoryPageRankDistributed(sqlite, graphId, snapshotId, topK, maxIterations,
-                                                  PAGE_RANK_ALPHA, masterIP);
-        dataSourceInfo = "Data source: distributed-direct (worker-local snapshot files; staging disabled)";
+        // Prefer exact staged/local computation (lower memory via sharded CSR) for correctness.
+        std::string stageError;
+        bool stagedOk = countHistoryPageRankFromStagedBitmaps(sqlite, graphId, snapshotId, topK, maxIterations,
+                                                             PAGE_RANK_ALPHA, result, stageError, dataSourceInfo);
 
-        if (result.partitionsProcessed == 0) {
-            bool allowStagedFallback = Utils::parseBoolean(
-                Utils::getJasmineGraphProperty("org.jasminegraph.histpgr.allow.staged.fallback"));
-            if (!allowStagedFallback) {
-                std::string error = "Error: Failed to process snapshot " +
-                                    std::to_string(snapshotId) +
+        if (!stagedOk) {
+            // Staged/exact path failed — try fast distributed-direct worker-local computation as fallback.
+            frontend_logger.info("Staged/exact histpgr path unavailable: " + stageError + " — attempting distributed-direct fallback");
+            result = countHistoryPageRankDistributed(sqlite, graphId, snapshotId, topK, maxIterations,
+                                                    PAGE_RANK_ALPHA, masterIP);
+            if (result.partitionsProcessed > 0) {
+                dataSourceInfo = "Data source: distributed-direct (worker-local snapshot files; staged fallback failed)";
+            } else {
+                std::string error = "Error: Failed to process snapshot " + std::to_string(snapshotId) +
                                     " (no partitions responded — check worker connectivity, hpgr protocol, and snapshot availability)";
                 resultWr = write(connFd, error.c_str(), error.length());
                 resultWr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
-                frontend_logger.warn("Distributed-direct history pagerank failed for graph " +
-                                     std::to_string(graphId) + " snapshot " +
-                                     std::to_string(snapshotId) +
-                                     " and staged fallback is disabled");
-                return;
-            }
-
-            frontend_logger.warn("Distributed-direct history pagerank failed for graph " +
-                                 std::to_string(graphId) + " snapshot " +
-                                 std::to_string(snapshotId) +
-                                 "; trying staged fallback");
-
-            std::string errorMessage;
-            if (!countHistoryPageRankFromStagedBitmaps(sqlite, graphId, snapshotId, topK, maxIterations,
-                                                       PAGE_RANK_ALPHA, result, errorMessage, dataSourceInfo)) {
-                std::string error = "Error: " + errorMessage;
-                resultWr = write(connFd, error.c_str(), error.length());
-                resultWr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
-                frontend_logger.error(error);
+                frontend_logger.warn("Both staged and distributed-direct histpgr paths failed for graph " + std::to_string(graphId) + " snapshot " + std::to_string(snapshotId));
                 return;
             }
         }
+
+        auto overallEnd = std::chrono::high_resolution_clock::now();
+        long overallMs = std::chrono::duration_cast<std::chrono::milliseconds>(overallEnd - overallStart).count();
+        result.durationMs = overallMs;
 
         if (result.partitionsProcessed > 0) {
             std::stringstream response;
