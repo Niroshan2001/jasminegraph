@@ -5738,6 +5738,8 @@ static void history_pagerank_command(int connFd, SQLiteDBInterface *sqlite, bool
                                      const std::string& masterIP) {
     frontend_logger.info("History PageRank command received");
 
+    auto overallStart = std::chrono::high_resolution_clock::now();
+
     std::string message = "Graph ID?";
     int resultWr = write(connFd, message.c_str(), message.length());
     resultWr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
