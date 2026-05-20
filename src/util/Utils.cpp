@@ -889,6 +889,9 @@ std::string Utils::send_job(std::string job_group_name, std::string metric_name,
     }
 
     pushGatewayJobAddr += "metrics/job/";
+    if (job_group_name.empty()) {
+        job_group_name = "jasminegraph";
+    }
 
     std::string response_string;
     curl = curl_easy_init();
@@ -903,7 +906,7 @@ std::string Utils::send_job(std::string job_group_name, std::string metric_name,
         } else {
             uniqueWorkerID = "Master";
         }
-        hostPGAddr = pushGatewayJobAddr + uniqueWorkerID;
+        hostPGAddr = pushGatewayJobAddr + job_group_name + "/instance/" + uniqueWorkerID;
         curl_easy_setopt(curl, CURLOPT_URL, hostPGAddr.c_str());
 
         // Set the callback function to handle the response data

@@ -29,6 +29,7 @@ limitations under the License.
 
 #include "../../partitioner/stream/HDFSMultiThreadedHashPartitioner.h"
 #include "../../server/JasmineGraphServer.h"
+#include "../../util/Utils.h"
 class SQLiteDBInterface;
 
 using json = nlohmann::json;
@@ -925,13 +926,17 @@ bool Pipeline::streamGraphToDesignatedWorker(std::string host, int port, std::st
 
             dbLock.lock();
             sqlite->runUpdate(sqlStatement);
-            auto elapsedSeconds = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now() -
-                                                                                   previousTimeStampTriplesPerSecond);
-
-            double elapsed = static_cast<double>(elapsedSeconds.count());
+            auto elapsed = std::chrono::duration<double>(std::chrono::system_clock::now() -
+                                                        previousTimeStampTriplesPerSecond)
+                               .count();
+            if (elapsed <= 0.0) {
+                elapsed = 1.0;
+            }
 
             kgConstructionRates->triplesPerSecond =
                 (std::stod(graph["edgecount"].dump()) - previousEdgeCount) / elapsed;
+            Utils::send_job("ingestion_graph_" + graphId, "jasminegraph_ingestion_edges_per_second",
+                            std::to_string(kgConstructionRates->triplesPerSecond));
             previousEdgeCount = std::stod(graph["edgecount"].dump());
             previousTimeStampTriplesPerSecond = std::chrono::system_clock::now();
             json partitions = metaJSON["partitions"];
@@ -981,10 +986,12 @@ bool Pipeline::streamGraphToDesignatedWorker(std::string host, int port, std::st
 
                 std::string updateQuery = "UPDATE graph SET uploaded_bytes = " + std::to_string(completedBytes) +
                                           " WHERE idgraph = " + graphId + ";";
-                auto elapsedSeconds = std::chrono::duration_cast<std::chrono::seconds>(
-                    std::chrono::system_clock::now() - previousTimeStampBytesPerSecond);
-
-                double elapsed = static_cast<double>(elapsedSeconds.count());
+                auto elapsed = std::chrono::duration<double>(std::chrono::system_clock::now() -
+                                                            previousTimeStampBytesPerSecond)
+                                   .count();
+                if (elapsed <= 0.0) {
+                    elapsed = 1.0;
+                }
                 kgConstructionRates->bytesPerSecond = (completedBytes - previousBytesCount) / elapsed;
                 previousBytesCount = completedBytes;
                 previousTimeStampBytesPerSecond = std::chrono::system_clock::now();
