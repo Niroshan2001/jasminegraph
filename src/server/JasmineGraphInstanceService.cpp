@@ -4982,6 +4982,7 @@ static void worker_direct_kafka_stream_command(
         cfg.csvInputMode       = configJson.value("csvInputMode", false);
         cfg.numConsumerThreads = configJson["numConsumerThreads"].get<int>();
         cfg.workerIndex        = configJson.value("workerIndex", 0);
+        cfg.pushgatewayUrl     = configJson.value("pushgatewayUrl", std::string(""));
         for (auto& p : configJson["ownedPartitions"]) {
             cfg.ownedPartitions.push_back(p.get<int>());
         }

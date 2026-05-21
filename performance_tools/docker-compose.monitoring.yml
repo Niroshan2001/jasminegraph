@@ -1,0 +1,108 @@
+# Monitoring stack for JasmineGraph experiments.
+# Run this on the MASTER server alongside the main docker-compose.yml.
+#
+# Services:
+#   pushgateway  172.28.5.3:9091   ← workers POST latency metrics here
+#   prometheus   172.28.5.2:9090   ← scrapes pushgateway + self
+#   grafana      172.28.5.4:3000   ← visualises everything
+#   tempo        172.28.5.5:3200   ← distributed traces (existing)
+#   loki         172.28.5.6:3100   ← logs (existing)
+#
+# Usage (master server):
+#   docker compose -f docker-compose.yml -f performance_tools/docker-compose.monitoring.yml up -d
+
+services:
+
+  # ── Prometheus Pushgateway ───────────────────────────────────────────────────
+  # Workers on remote servers POST their ingestion latency histograms here.
+  # Prometheus then scrapes it via conf/prometheus.yaml.
+  pushgateway:
+    image: prom/pushgateway:latest
+    container_name: pushgateway
+    restart: unless-stopped
+    ports:
+      - "9091:9091"          # exposed on host so worker servers can reach it
+    networks:
+      jasminenet:
+        ipv4_address: 172.28.5.3
+
+  # ── Prometheus ───────────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - "../conf/prometheus.yaml:/etc/prometheus/prometheus.yml:ro"
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-lifecycle"
+    networks:
+      jasminenet:
+        ipv4_address: 172.28.5.2
+
+  # ── Grafana ──────────────────────────────────────────────────────────────────
+  grafana:
+    build:
+      context: ..
+      dockerfile: Dockerfile.grafana
+    container_name: grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks:
+      jasminenet:
+        ipv4_address: 172.28.5.4
+    depends_on:
+      - prometheus
+
+  # ── Grafana Tempo (distributed traces) ───────────────────────────────────────
+  tempo:
+    image: grafana/tempo:latest
+    container_name: tempo
+    restart: unless-stopped
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - "../tempo-config.yaml:/etc/tempo.yaml:ro"
+      - tempo_data:/var/tempo
+    ports:
+      - "3200:3200"    # Tempo HTTP API (Grafana datasource)
+      - "4318:4318"    # OTLP/HTTP receiver (workers push traces here)
+    networks:
+      jasminenet:
+        ipv4_address: 172.28.5.5
+
+  # ── Loki (logs) ──────────────────────────────────────────────────────────────
+  loki:
+    image: grafana/loki:latest
+    container_name: loki
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    volumes:
+      - "../loki-config.yaml:/etc/loki/local-config.yaml:ro"
+      - loki_data:/loki
+    ports:
+      - "3100:3100"
+    networks:
+      jasminenet:
+        ipv4_address: 172.28.5.6
+
+networks:
+  jasminenet:
+    external: true   # joins the existing jasminenet created by main docker-compose.yml
+
+volumes:
+  prometheus_data:
+  grafana_data:
+  tempo_data:
+  loki_data:

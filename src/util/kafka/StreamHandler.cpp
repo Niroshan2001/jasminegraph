@@ -1298,6 +1298,9 @@ void StreamHandler::listenViaDirectWorkers(
                                    " owned graph partitions)");
         configJson["numConsumerThreads"] = numConsumerThreads;
         configJson["workerIndex"]        = wi;
+        // Pushgateway URL so workers can push latency metrics directly to the master's Prometheus stack
+        std::string pgUrl = Utils::getJasmineGraphProperty("org.jasminegraph.metrics.pushgateway.url");
+        configJson["pushgatewayUrl"]     = pgUrl;
         std::string configStr = configJson.dump();
 
         // ── Phase 1: open TCP connection and deliver config ───────────────

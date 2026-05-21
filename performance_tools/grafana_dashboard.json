@@ -3517,6 +3517,251 @@
       ],
       "title": "Disk Block Size KB",
       "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false, "axisCenteredZero": false,
+            "axisColorMode": "text", "axisLabel": "latency (µs)",
+            "axisPlacement": "auto", "barAlignment": 0, "barWidthFactor": 0.6,
+            "drawStyle": "line", "fillOpacity": 15, "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false, "lineInterpolation": "smooth", "lineWidth": 2,
+            "pointSize": 5, "scaleDistribution": { "type": "linear" },
+            "showPoints": "auto", "spanNulls": true,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "µs"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 80 },
+      "id": 50,
+      "options": {
+        "legend": { "calcs": ["mean", "max", "lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "hideZeros": false, "mode": "multi", "sort": "none" }
+      },
+      "pluginVersion": "12.1.1",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.50, sum(rate(jg_edge_ingestion_latency_us_bucket[2m])) by (le))",
+          "legendFormat": "p50 latency",
+          "range": true, "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum(rate(jg_edge_ingestion_latency_us_bucket[2m])) by (le))",
+          "legendFormat": "p95 latency",
+          "range": true, "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.99, sum(rate(jg_edge_ingestion_latency_us_bucket[2m])) by (le))",
+          "legendFormat": "p99 latency",
+          "range": true, "refId": "C"
+        }
+      ],
+      "title": "Edge Ingestion Latency — p50 / p95 / p99 (µs)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false, "axisCenteredZero": false,
+            "axisColorMode": "text", "axisLabel": "latency (µs)",
+            "axisPlacement": "auto", "barAlignment": 0, "barWidthFactor": 0.6,
+            "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false, "lineInterpolation": "smooth", "lineWidth": 2,
+            "pointSize": 5, "scaleDistribution": { "type": "linear" },
+            "showPoints": "auto", "spanNulls": true,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "µs"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 80 },
+      "id": 51,
+      "options": {
+        "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "hideZeros": false, "mode": "multi", "sort": "none" }
+      },
+      "pluginVersion": "12.1.1",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.99, sum(rate(jg_edge_ingestion_latency_us_bucket[2m])) by (le, worker))",
+          "legendFormat": "worker {{worker}} p99",
+          "range": true, "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.50, sum(rate(jg_edge_ingestion_latency_us_bucket[2m])) by (le, worker))",
+          "legendFormat": "worker {{worker}} p50",
+          "range": true, "refId": "B"
+        }
+      ],
+      "title": "Edge Ingestion Latency per Worker — p50 / p99 (µs)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false, "axisCenteredZero": false,
+            "axisColorMode": "text", "axisLabel": "local vs central (µs)",
+            "axisPlacement": "auto", "barAlignment": 0, "barWidthFactor": 0.6,
+            "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false, "lineInterpolation": "smooth", "lineWidth": 2,
+            "pointSize": 5, "scaleDistribution": { "type": "linear" },
+            "showPoints": "auto", "spanNulls": true,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "µs"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 88 },
+      "id": 52,
+      "options": {
+        "legend": { "calcs": ["mean"], "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "hideZeros": false, "mode": "multi", "sort": "none" }
+      },
+      "pluginVersion": "12.1.1",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.99, sum(rate(jg_edge_ingestion_latency_us_bucket{edge_type=\"local\"}[2m])) by (le))",
+          "legendFormat": "local edge p99",
+          "range": true, "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.99, sum(rate(jg_edge_ingestion_latency_us_bucket{edge_type=\"central\"}[2m])) by (le))",
+          "legendFormat": "central edge p99",
+          "range": true, "refId": "B"
+        }
+      ],
+      "title": "Local vs Central Edge Ingestion Latency p99 (µs)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false, "axisCenteredZero": false,
+            "axisColorMode": "text", "axisLabel": "snapshot duration (ms)",
+            "axisPlacement": "auto", "barAlignment": 0, "barWidthFactor": 0.6,
+            "drawStyle": "bars", "fillOpacity": 60, "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false, "lineInterpolation": "linear", "lineWidth": 1,
+            "pointSize": 5, "scaleDistribution": { "type": "linear" },
+            "showPoints": "auto", "spanNulls": true,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 88 },
+      "id": 53,
+      "options": {
+        "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "hideZeros": false, "mode": "single", "sort": "none" }
+      },
+      "pluginVersion": "12.1.1",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.99, sum(rate(jg_snapshot_create_duration_ms_bucket[5m])) by (le, worker))",
+          "legendFormat": "worker {{worker}} snapshot p99",
+          "range": true, "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.50, sum(rate(jg_snapshot_create_duration_ms_bucket[5m])) by (le, worker))",
+          "legendFormat": "worker {{worker}} snapshot p50",
+          "range": true, "refId": "B"
+        }
+      ],
+      "title": "Global Snapshot Creation Duration per Worker (ms)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false, "axisCenteredZero": false,
+            "axisColorMode": "text", "axisLabel": "edges ingested (total)",
+            "axisPlacement": "auto", "barAlignment": 0, "barWidthFactor": 0.6,
+            "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false, "lineInterpolation": "linear", "lineWidth": 2,
+            "pointSize": 5, "scaleDistribution": { "type": "linear" },
+            "showPoints": "auto", "spanNulls": true,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 96 },
+      "id": 54,
+      "options": {
+        "legend": { "calcs": ["lastNotNull", "sum"], "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "hideZeros": false, "mode": "multi", "sort": "none" }
+      },
+      "pluginVersion": "12.1.1",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "editorMode": "code",
+          "expr": "jg_edge_ingestion_total",
+          "legendFormat": "worker {{worker}} graph {{graph_id}}",
+          "range": true, "refId": "A"
+        }
+      ],
+      "title": "Total Edges Ingested per Worker (cumulative counter)",
+      "type": "timeseries"
     }
   ],
   "preload": false,

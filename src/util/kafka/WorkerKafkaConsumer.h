@@ -47,6 +47,7 @@ LIMITATION: Currently applies to HASH partitioning only.
 #include "../../temporalstore/TemporalStore.h"
 #include "../logger/Logger.h"
 #include "InstanceStreamHandler.h"
+#include "../metrics/IngestionMetrics.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Configuration bundle serialized as JSON and sent from master → worker
@@ -65,6 +66,7 @@ struct WorkerKafkaConfig {
     bool        csvInputMode   = false;  // raw Kafka payload is CSV source,target
     int         numConsumerThreads = 3;  // parallel Kafka consumer threads
     int         workerIndex     = 0;  // index of this worker (0, 1, 2, ...)
+    std::string pushgatewayUrl  = "";  // e.g. "http://10.8.100.247:9091" (empty = disabled)
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -104,7 +106,8 @@ class WorkerKafkaConsumer {
     WorkerKafkaConfig   cfg;
     std::map<std::string, JasmineGraphIncrementalLocalStore*>& localStoreMap;
     InstanceStreamHandler streamHandler;  // wraps localStoreMap for edge writes
-     bool temporalOnlyMode_ = false;  // if true, skip native-store writes
+    bool temporalOnlyMode_ = false;  // if true, skip native-store writes
+    IngestionMetrics metrics_;  // per-run histogram accumulator, pushed at end of run()
 
     // Temporal stores: per owned-partition + one shared central store
     std::map<int, std::unique_ptr<TemporalStore>> localTemporalStores;

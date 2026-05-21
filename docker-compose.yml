@@ -51,3 +51,13 @@ networks:
         - subnet: 172.28.5.0/24
           ip_range: 172.28.5.0/24
           gateway: 172.28.5.1
+
+  # Separate monitoring network so master + monitoring stack can talk
+  monitornet:
+    external: false
+    name: monitornet
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.6.0/24
+          gateway: 172.28.6.1

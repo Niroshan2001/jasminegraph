@@ -152,6 +152,9 @@ WorkerKafkaConsumer::WorkerKafkaConsumer(
     temporalOnlyMode_ = (temporalOnlyProp == "true" || temporalOnlyProp == "1" ||
                          temporalOnlyProp == "yes" || temporalOnlyProp == "y");
 
+    // Parse pushgateway URL if provided in config
+    // (populated by master from org.jasminegraph.metrics.pushgateway.url property)
+
     for (int p : config.ownedPartitions) {
         ownedPartitionSet.insert(p);
     }
@@ -410,6 +413,7 @@ void WorkerKafkaConsumer::createGlobalSnapshot() {
     Utils::createDirectory(snapshotDir);
 
     uint32_t snapId = globalSnapshotId.load();
+    auto snapStart = std::chrono::steady_clock::now();
     workerKafkaLogger().info("[SNAPSHOT] Creating global snapshot " + std::to_string(snapId) +
                              " for graph=" + std::to_string(cfg.graphId) +
                              " dir=" + snapshotDir);
@@ -481,6 +485,15 @@ void WorkerKafkaConsumer::createGlobalSnapshot() {
     if (centralTemporalStore) centralTemporalStore->openNewSnapshot();
 
     globalSnapshotId++;
+
+    // Record snapshot creation duration for Grafana histogram
+    {
+        uint64_t snapMs = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - snapStart).count());
+        metrics_.recordSnapshotDuration(snapMs);
+    }
+
     workerKafkaLogger().info("[SNAPSHOT] Global snapshot " + std::to_string(snapId) + " created.");
 }
 
@@ -672,6 +685,9 @@ void WorkerKafkaConsumer::consumerThreadFunc(
             if (isErrorInMessage(msg)) continue;
 
             // ── 1. JSON PARSE ──────────────────────────────────────────────
+            // T0: record the moment this edge arrives at the worker process
+            auto t0 = std::chrono::steady_clock::now();
+
             std::string raw(msg.get_payload());
             json edgeJson;
             std::string parseError;
@@ -785,6 +801,18 @@ void WorkerKafkaConsumer::consumerThreadFunc(
                                                     graphIdStr + "_" + std::to_string(part_d));
                     }
                 }
+            }
+
+            // T1: edge is now queued for persistence (temporal stored + native queued)
+            // Compute and record end-to-end latency for this edge.
+            {
+                auto t1 = std::chrono::steady_clock::now();
+                uint64_t latencyUs = static_cast<uint64_t>(
+                    std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count());
+                bool isLocal = (part_s == part_d);
+                metrics_.recordEdgeLatency(latencyUs, isLocal);
+                // Also track the persistence sub-step duration (temporal + native overhead)
+                metrics_.recordPersistDuration(latencyUs);
             }
 
             ++threadMsgs;
@@ -902,5 +930,19 @@ WorkerKafkaStats WorkerKafkaConsumer::run() {
         "WorkerKafkaConsumer done: total=" + std::to_string(stats.totalMessages) +
         " local="   + std::to_string(stats.totalLocal)   +
         " central=" + std::to_string(stats.totalCentral));
+
+    // Push ingestion latency metrics to Prometheus Pushgateway
+    if (!cfg.pushgatewayUrl.empty()) {
+        workerKafkaLogger().info("[METRICS] Pushing ingestion latency metrics to " +
+                                 cfg.pushgatewayUrl);
+        bool ok = metrics_.push(cfg.pushgatewayUrl, "jasminegraph_worker",
+                                cfg.graphId, cfg.workerIndex);
+        if (!ok) {
+            workerKafkaLogger().warn("[METRICS] Failed to push metrics — check Pushgateway is reachable");
+        }
+    } else {
+        workerKafkaLogger().info("[METRICS] pushgatewayUrl not set; skipping metric push");
+    }
+
     return stats;
 }
