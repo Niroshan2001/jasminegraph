@@ -18,6 +18,8 @@ limitations under the License.
 #include <memory>
 #include <stdexcept>
 #include <mutex>
+#include <fstream>
+#include <cstdlib>
 #include <vector>
 #include <atomic>
 #include <limits>
@@ -66,46 +68,85 @@ struct IngestLatencyHistogram {
 // Batch latency aggregator: logs summary stats every N edges to keep log small
 struct BatchLatencyStats {
   static const int BATCH_SIZE = 1000;
-  std::atomic<int> edgeCount{0};
-  double sum = 0.0;
-  double minLat = std::numeric_limits<double>::max();
-  double maxLat = 0.0;
+  std::vector<double> samples;
   std::mutex mtx;
 
+  BatchLatencyStats() {
+    incremental_localstore_logger.info(
+        "Ingestion latency batch logging enabled: batch_size=1000, output_file=/var/tmp/jasminegraph-localstore-tmp/ingestion_latency_batches.log");
+  }
+
   void recordLatency(double latency_ms) {
+    bool shouldFlush = false;
     {
       std::lock_guard<std::mutex> guard(mtx);
-      sum += latency_ms;
-      if (latency_ms < minLat) minLat = latency_ms;
-      if (latency_ms > maxLat) maxLat = latency_ms;
+      samples.push_back(latency_ms);
+      shouldFlush = (samples.size() >= BATCH_SIZE);
     }
-    if (edgeCount.fetch_add(1) + 1 >= BATCH_SIZE) {
-      logBatch();
-      reset();
+    if (shouldFlush) {
+      flush();
     }
   }
 
-  void logBatch() {
+  void flush() {
     std::lock_guard<std::mutex> guard(mtx);
-    if (edgeCount.load() == 0) return;
-    double avg = sum / edgeCount.load();
+    if (samples.empty()) return;
+
+    double sum = 0.0;
+    double minLat = std::numeric_limits<double>::max();
+    double maxLat = 0.0;
+    for (double sample : samples) {
+      sum += sample;
+      if (sample < minLat) minLat = sample;
+      if (sample > maxLat) maxLat = sample;
+    }
+    uint64_t edgeCount = samples.size();
+    double avg = sum / static_cast<double>(edgeCount);
+
     std::ostringstream logLine;
-    logLine << "{\"metric\":\"jasminegraph_ingestion_latency_batch\",\"edges\":" << edgeCount.load()
+    logLine << "{\"metric\":\"jasminegraph_ingestion_latency_batch\",\"edges\":" << edgeCount
             << ",\"sum_ms\":" << std::fixed << sum
             << ",\"avg_ms\":" << avg
             << ",\"min_ms\":" << minLat
-            << ",\"max_ms\":" << maxLat << "}";
-    incremental_localstore_logger.info(logLine.str());
-  }
+            << ",\"max_ms\":" << maxLat
+            << ",\"samples_ms\":[";
+    for (size_t i = 0; i < samples.size(); ++i) {
+      if (i > 0) {
+        logLine << ',';
+      }
+      logLine << samples[i];
+    }
+    logLine << "]}";
+    const std::string logEntry = logLine.str();
+    incremental_localstore_logger.info(logEntry);
 
-  void reset() {
-    std::lock_guard<std::mutex> guard(mtx);
-    edgeCount.store(0);
-    sum = 0.0;
-    minLat = std::numeric_limits<double>::max();
-    maxLat = 0.0;
+    std::ofstream batchLogFile("/var/tmp/jasminegraph-localstore-tmp/ingestion_latency_batches.log",
+                               std::ios::out | std::ios::app);
+    if (batchLogFile.is_open()) {
+      batchLogFile << logEntry << '\n';
+    } else {
+      incremental_localstore_logger.error(
+          "Failed to open ingestion latency batch log file: /var/tmp/jasminegraph-localstore-tmp/ingestion_latency_batches.log");
+    }
+
+    incremental_localstore_logger.info("Flushed ingestion latency batch: edges=" + std::to_string(edgeCount) +
+                                       ", avg_ms=" + std::to_string(avg) +
+                                       ", min_ms=" + std::to_string(minLat) +
+                                       ", max_ms=" + std::to_string(maxLat));
+
+    samples.clear();
   }
 } batchLatencyStats;
+
+static void flushLatencyBatchAtExit() {
+  batchLatencyStats.flush();
+}
+
+struct BatchLatencyFlushRegistrar {
+  BatchLatencyFlushRegistrar() {
+    std::atexit(flushLatencyBatchAtExit);
+  }
+} batchLatencyFlushRegistrar;
 
 static size_t HIST_PUSH_THRESHOLD = 1; // push snapshot after this many observations
 
@@ -395,6 +436,14 @@ void JasmineGraphIncrementalLocalStore::addEdgeFromJson(const json& edgeJson) {
             if (ingestHistogram.observations_since_push.load() >= HIST_PUSH_THRESHOLD) {
               pushHistogramSnapshot();
             }
+          }
+        } else {
+          static std::atomic<uint64_t> missing_ingest_ts_count{0};
+          uint64_t missing_count = missing_ingest_ts_count.fetch_add(1) + 1;
+          if (missing_count <= 5 || (missing_count % 10000) == 0) {
+            incremental_localstore_logger.warn(
+                "Skipping latency computation because __ingest_ts_ms is missing or invalid. edge=" +
+                sId + "-" + dId + ", missing_count=" + std::to_string(missing_count));
           }
         }
       }
