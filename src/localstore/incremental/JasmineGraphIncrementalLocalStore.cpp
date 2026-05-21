@@ -63,6 +63,50 @@ struct IngestLatencyHistogram {
   }
 } ingestHistogram;
 
+// Batch latency aggregator: logs summary stats every N edges to keep log small
+struct BatchLatencyStats {
+  static const int BATCH_SIZE = 1000;
+  std::atomic<int> edgeCount{0};
+  double sum = 0.0;
+  double minLat = std::numeric_limits<double>::max();
+  double maxLat = 0.0;
+  std::mutex mtx;
+
+  void recordLatency(double latency_ms) {
+    {
+      std::lock_guard<std::mutex> guard(mtx);
+      sum += latency_ms;
+      if (latency_ms < minLat) minLat = latency_ms;
+      if (latency_ms > maxLat) maxLat = latency_ms;
+    }
+    if (edgeCount.fetch_add(1) + 1 >= BATCH_SIZE) {
+      logBatch();
+      reset();
+    }
+  }
+
+  void logBatch() {
+    std::lock_guard<std::mutex> guard(mtx);
+    if (edgeCount.load() == 0) return;
+    double avg = sum / edgeCount.load();
+    std::ostringstream logLine;
+    logLine << "{\"metric\":\"jasminegraph_ingestion_latency_batch\",\"edges\":" << edgeCount.load()
+            << ",\"sum_ms\":" << std::fixed << sum
+            << ",\"avg_ms\":" << avg
+            << ",\"min_ms\":" << minLat
+            << ",\"max_ms\":" << maxLat << "}";
+    incremental_localstore_logger.info(logLine.str());
+  }
+
+  void reset() {
+    std::lock_guard<std::mutex> guard(mtx);
+    edgeCount.store(0);
+    sum = 0.0;
+    minLat = std::numeric_limits<double>::max();
+    maxLat = 0.0;
+  }
+} batchLatencyStats;
+
 static size_t HIST_PUSH_THRESHOLD = 1; // push snapshot after this many observations
 
 static void pushHistogramSnapshot() {
@@ -302,6 +346,9 @@ void JasmineGraphIncrementalLocalStore::addEdgeFromJson(const json& edgeJson) {
           long long now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
               std::chrono::system_clock::now().time_since_epoch()).count();
           long long latency_ms = now_ms - ingest_ts;
+
+          // Aggregate latency in batch (logs summary every 1000 edges)
+          batchLatencyStats.recordLatency(static_cast<double>(latency_ms));
 
           bool pushed_via_prom = false;
 #ifdef USE_PROMETHEUS_CPP
