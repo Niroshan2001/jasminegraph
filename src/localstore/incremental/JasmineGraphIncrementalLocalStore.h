@@ -45,6 +45,7 @@ class JasmineGraphIncrementalLocalStore {
                                       std::string openMode = "trunk", bool embedNode = false);
     ~JasmineGraphIncrementalLocalStore();
     bool getAndStoreEmbeddings();
+    void printAndSaveHistogram();
     void addLocalEdge(std::string edge);
     void addCentralEdge(std::string edge);
     void addNodeMetaProperty(NodeBlock* nodeBlock, std::string propertyKey, std::string propertyValue);

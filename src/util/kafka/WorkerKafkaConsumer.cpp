@@ -88,9 +88,18 @@ bool parseCsvEdgePayload(const std::string& payload, std::string& sourceId, std:
 
 bool normalizeKafkaPayloadToEdgeJson(const std::string& payload, bool csvInputMode,
                                      json& edgeJson, std::string& error) {
+    long long now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+
     if (!csvInputMode) {
         try {
             edgeJson = json::parse(payload);
+            if (!edgeJson.contains("properties")) {
+                edgeJson["properties"] = json::object();
+            }
+            if (!edgeJson["properties"].contains("__ingest_ts_ms")) {
+                edgeJson["properties"]["__ingest_ts_ms"] = std::to_string(now_ms);
+            }
             return true;
         } catch (const std::exception& e) {
             error = e.what();
@@ -102,6 +111,12 @@ bool normalizeKafkaPayloadToEdgeJson(const std::string& payload, bool csvInputMo
     if (!trimmed.empty() && trimmed.front() == '{') {
         try {
             edgeJson = json::parse(trimmed);
+            if (!edgeJson.contains("properties")) {
+                edgeJson["properties"] = json::object();
+            }
+            if (!edgeJson["properties"].contains("__ingest_ts_ms")) {
+                edgeJson["properties"]["__ingest_ts_ms"] = std::to_string(now_ms);
+            }
             return true;
         } catch (const std::exception& e) {
             error = e.what();
@@ -118,7 +133,7 @@ bool normalizeKafkaPayloadToEdgeJson(const std::string& payload, bool csvInputMo
     edgeJson = {
         {"source", {{"id", sourceId}, {"properties", {{"name", "Node_" + sourceId}}}}},
         {"destination", {{"id", targetId}, {"properties", {{"name", "Node_" + targetId}}}}},
-        {"properties", {{"publication", "1"}, {"title", "CSV"}, {"graphId", "1"}}}
+        {"properties", {{"publication", "1"}, {"title", "CSV"}, {"graphId", "1"}, {"__ingest_ts_ms", std::to_string(now_ms)}}}
     };
     return true;
 }
