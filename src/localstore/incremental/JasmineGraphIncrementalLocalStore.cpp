@@ -17,6 +17,24 @@ limitations under the License.
 
 #include <memory>
 #include <stdexcept>
+#include <mutex>
+#include <vector>
+#include <atomic>
+#include <limits>
+#include <sstream>
+#if defined(ENABLE_PROMETHEUS_CPP)
+  /* Only include prometheus-cpp headers if they are actually available on the
+     include path. Some build environments may define ENABLE_PROMETHEUS_CPP via
+     CMake but not have headers installed (e.g., partial package). Use
+     __has_include to protect against missing headers. */
+#  if defined(__has_include) && __has_include(<prometheus/push.h>)
+#    define USE_PROMETHEUS_CPP 1
+#    include <prometheus/registry.h>
+#    include <prometheus/histogram.h>
+#    include <prometheus/push.h>
+#    include <prometheus/collectable.h>
+#  endif
+#endif
 
 #include "../../nativestore/MetaPropertyLink.h"
 #include "../../nativestore/RelationBlock.h"
@@ -26,6 +44,91 @@ limitations under the License.
 #include "../../vectorstore/TextEmbedder.h"
 
 Logger incremental_localstore_logger;
+
+// Simple in-process histogram implementation to aggregate latency observations
+// and push cumulative bucket counts to Pushgateway so Prometheus can compute
+// percentiles via histogram_quantile(). This avoids adding a C++ Prometheus
+// client dependency while producing correct bucket counts.
+struct IngestLatencyHistogram {
+  std::vector<double> le;            // bucket upper bounds (ms)
+  std::vector<uint64_t> counts;     // per-bucket (non-cumulative) counts
+  uint64_t count = 0;               // total observations
+  double sum = 0.0;                 // sum of latencies
+  std::mutex mtx;
+  std::atomic<uint64_t> observations_since_push{0};
+  IngestLatencyHistogram() {
+    // Example buckets in milliseconds (suitable for edge ingest latencies)
+    le = {5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000};
+    counts.assign(le.size() + 1, 0); // extra slot for +Inf
+  }
+} ingestHistogram;
+
+static size_t HIST_PUSH_THRESHOLD = 1; // push snapshot after this many observations
+
+static void pushHistogramSnapshot() {
+  std::lock_guard<std::mutex> guard(ingestHistogram.mtx);
+  // Build cumulative counts
+  std::vector<uint64_t> cumulative(ingestHistogram.counts.size());
+  uint64_t running = 0;
+  for (size_t i = 0; i < ingestHistogram.counts.size(); ++i) {
+    running += ingestHistogram.counts[i];
+    cumulative[i] = running;
+  }
+
+  // Push each bucket as a metric with le label. Use Utils::send_job to push
+  // lines like: jasminegraph_ingestion_latency_ms_bucket{le="10"} 123
+  for (size_t i = 0; i < cumulative.size(); ++i) {
+    std::ostringstream metricName;
+    if (i < ingestHistogram.le.size()) {
+      // finite upper bound
+      metricName << "jasminegraph_ingestion_latency_ms_bucket{le=\"" << std::fixed << std::noshowpoint << ingestHistogram.le[i] << "\"}";
+    } else {
+      metricName << "jasminegraph_ingestion_latency_ms_bucket{le=\"+Inf\"}";
+    }
+    Utils::send_job("", metricName.str(), std::to_string(cumulative[i]));
+  }
+
+  // Push count and sum
+  Utils::send_job("", "jasminegraph_ingestion_latency_ms_count", std::to_string(ingestHistogram.count));
+  // sum as double; format without scientific notation
+  std::ostringstream sumStr;
+  sumStr << std::fixed << ingestHistogram.sum;
+  Utils::send_job("", "jasminegraph_ingestion_latency_ms_sum", sumStr.str());
+
+  ingestHistogram.observations_since_push.store(0);
+}
+
+#ifdef USE_PROMETHEUS_CPP
+// prometheus-cpp backed histogram + pushgateway helper
+static std::shared_ptr<prometheus::Registry> promRegistry;
+static prometheus::Histogram* promLatencyHist = nullptr;
+static std::unique_ptr<prometheus::PushGateway> promPushGateway;
+static std::mutex promInitMutex;
+
+static void initPrometheusClient() {
+  std::lock_guard<std::mutex> guard(promInitMutex);
+  if (promLatencyHist != nullptr) return;
+  promRegistry = std::make_shared<prometheus::Registry>();
+  std::vector<double> buckets = {5,10,25,50,100,250,500,1000,2500,5000,10000};
+  auto& family = prometheus::BuildHistogram()
+                     .Name("jasminegraph_ingestion_latency_ms")
+                     .Help("Per-edge ingestion->persistence latency (ms)")
+                     .Register(*promRegistry);
+  promLatencyHist = &family.Add({}, prometheus::Histogram::BucketBoundaries{buckets});
+
+  // Prepare PushGateway client
+  std::string pushGatewayAddr;
+  if (jasminegraph_profile == PROFILE_K8S) {
+    std::unique_ptr<K8sInterface> interface(new K8sInterface());
+    pushGatewayAddr = interface->getJasmineGraphConfig("pushgateway_address");
+  } else {
+    pushGatewayAddr = Utils::getJasmineGraphProperty("org.jasminegraph.collector.pushgateway");
+  }
+  if (!pushGatewayAddr.empty()) {
+    promPushGateway = std::make_unique<prometheus::PushGateway>(pushGatewayAddr);
+  }
+}
+#endif
 
 JasmineGraphIncrementalLocalStore::JasmineGraphIncrementalLocalStore(
     unsigned int graphID, unsigned int partitionID, std::string openMode,
@@ -183,6 +286,74 @@ void JasmineGraphIncrementalLocalStore::addEdgeFromJson(const json& edgeJson) {
 
     incremental_localstore_logger.debug("Edge (" + sId + ", " + dId +
                                         ") Added successfully!");
+    // If the edge JSON included ingest metadata, compute latency and push metric
+    try {
+      if (edgeJson.contains("properties") && edgeJson["properties"].contains("__ingest_ts_ms")) {
+        long long ingest_ts = 0;
+        try {
+          ingest_ts = edgeJson["properties"]["__ingest_ts_ms"].get<long long>();
+        } catch (...) {
+          // fallback if stored as string
+          try {
+            ingest_ts = std::stoll(edgeJson["properties"]["__ingest_ts_ms"].get<std::string>());
+          } catch (...) { ingest_ts = 0; }
+        }
+        if (ingest_ts > 0) {
+          long long now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+              std::chrono::system_clock::now().time_since_epoch()).count();
+          long long latency_ms = now_ms - ingest_ts;
+
+          bool pushed_via_prom = false;
+#ifdef USE_PROMETHEUS_CPP
+          initPrometheusClient();
+          if (promLatencyHist) {
+            promLatencyHist->Observe(static_cast<double>(latency_ms));
+            // Push periodically to Pushgateway to avoid high overhead
+            if (!promPushGateway) {
+              // fallback: do nothing, rely on registry being scraped (not configured)
+            } else {
+              // push with job name 'jasminegraph' and no grouping labels
+              try {
+                promPushGateway->PushAdd(*promRegistry, "jasminegraph");
+                pushed_via_prom = true;
+              } catch (...) {
+                incremental_localstore_logger.debug("prometheus push failed");
+              }
+            }
+          }
+#endif
+          if (!pushed_via_prom) {
+            // Update in-process histogram
+            {
+              std::lock_guard<std::mutex> guard(ingestHistogram.mtx);
+              // find the first bucket with le >= latency_ms
+              bool placed = false;
+              for (size_t i = 0; i < ingestHistogram.le.size(); ++i) {
+                if (latency_ms <= static_cast<long long>(ingestHistogram.le[i])) {
+                  ingestHistogram.counts[i]++;
+                  placed = true;
+                  break;
+                }
+              }
+              if (!placed) {
+                // +Inf bucket
+                ingestHistogram.counts.back()++;
+              }
+              ingestHistogram.count++;
+              ingestHistogram.sum += static_cast<double>(latency_ms);
+              ingestHistogram.observations_since_push.fetch_add(1);
+            }
+
+            // Periodically push snapshot so Prometheus sees cumulative buckets
+            if (ingestHistogram.observations_since_push.load() >= HIST_PUSH_THRESHOLD) {
+              pushHistogramSnapshot();
+            }
+          }
+        }
+      }
+    } catch (...) {
+      incremental_localstore_logger.debug("Failed to compute/push ingestion latency metric");
+    }
   } catch (const json::type_error &ex) {
     incremental_localstore_logger.error(
         "JSON type error in addEdgeFromJson: " + std::string(ex.what()));

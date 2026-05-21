@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.29.6)
+cmake_minimum_required(VERSION 3.16)
 project(JasmineGraph)
 set(CMAKE_CXX_STANDARD 17)
 
@@ -350,6 +350,10 @@ target_link_libraries(JasmineGraphLib PRIVATE antlr4-runtime)
 # Option to enable/disable OpenTelemetry
 option(ENABLE_OPENTELEMETRY "Enable OpenTelemetry support" ON)
 
+# Option to enable Prometheus C++ client (for accurate histograms)
+option(ENABLE_PROMETHEUS_CPP "Enable prometheus-cpp integration for metrics" ON)
+
+
 # Disable OpenTelemetry for DEBUG builds to avoid issues in unit tests
 if(CMAKE_BUILD_TYPE STREQUAL "DEBUG")
     set(ENABLE_OPENTELEMETRY OFF)
@@ -390,6 +394,19 @@ endif()
 
 # Include OpenTelemetry headers
 target_include_directories(JasmineGraphLib PRIVATE /usr/local/include)
+
+# Discover and optionally link prometheus-cpp for histogram support
+if(ENABLE_PROMETHEUS_CPP)
+    find_package(prometheus-cpp CONFIG)
+    if (prometheus-cpp_FOUND)
+        message(STATUS "prometheus-cpp found - enabling histogram metrics via prometheus-cpp")
+        target_link_libraries(JasmineGraphLib PRIVATE prometheus-cpp::core prometheus-cpp::push)
+        target_compile_definitions(JasmineGraphLib PUBLIC ENABLE_PROMETHEUS_CPP)
+        target_compile_definitions(JasmineGraph PUBLIC ENABLE_PROMETHEUS_CPP)
+    else()
+        message(WARNING "prometheus-cpp not found - falling back to Pushgateway text pushes")
+    endif()
+endif()
 
 
 if (CMAKE_BUILD_TYPE STREQUAL "DEBUG")

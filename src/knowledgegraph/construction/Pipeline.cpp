@@ -26,6 +26,7 @@ limitations under the License.
 #include <sstream>
 #include <string>
 #include <thread>
+#include <atomic>
 
 #include "../../partitioner/stream/HDFSMultiThreadedHashPartitioner.h"
 #include "../../server/JasmineGraphServer.h"
@@ -356,8 +357,21 @@ json Pipeline::processTupleAndSaveInPartition(const std::vector<std::unique_ptr<
                                                                 std::to_string(i));
                         break;
                     }
-                    try {
-                        auto jsonEdge = json::parse(line);
+                            try {
+                                auto jsonEdge = json::parse(line);
+                                // Attach a unique ingest id and ingestion timestamp (ms) so
+                                // the worker can calculate per-edge latency when persisted.
+                                static std::atomic<uint64_t> ingestCounter{0};
+                                int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                     std::chrono::system_clock::now().time_since_epoch())
+                                                     .count();
+                                uint64_t cid = ingestCounter.fetch_add(1);
+                                std::string ingest_id = std::to_string(now_ms) + "_" + std::to_string(cid);
+                                if (!jsonEdge.contains("properties") || jsonEdge["properties"].is_null()) {
+                                    jsonEdge["properties"] = json::object();
+                                }
+                                jsonEdge["properties"]["__ingest_id"] = ingest_id;
+                                jsonEdge["properties"]["__ingest_ts_ms"] = now_ms;
                         auto source = jsonEdge["source"];
                         auto destination = jsonEdge["destination"];
                         std::string sourceId = source["id"].get<std::string>();

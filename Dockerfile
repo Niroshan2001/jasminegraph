@@ -11,6 +11,32 @@ RUN ln -sf /usr/bin/python3.8 /usr/bin/python3
 
 WORKDIR "${JASMINEGRAPH_HOME}"
 
+# Install build dependencies and prometheus-cpp (for histogram metrics)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+	git \
+	cmake \
+	build-essential \
+	pkg-config \
+	libprotobuf-dev \
+	libcurl4-openssl-dev \
+	libssl-dev \
+	ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+# Optional: build and install prometheus-cpp here if you want native prometheus-cpp integration.
+# Skipping building prometheus-cpp inside the image by default because some environments
+# have missing third-party build dependencies (civetweb etc). The code already contains
+# a fallback that pushes histogram bucket/count/sum lines via Pushgateway, which Prometheus
+# can use for histogram_quantile() in Grafana. To enable prometheus-cpp, either:
+#  - Install prometheus-cpp on the base image or host, or
+#  - Re-enable the build steps below and ensure required dev packages are present.
+## RUN git clone --depth 1 --recurse-submodules https://github.com/jupp0r/prometheus-cpp.git /tmp/prometheus-cpp \
+##  && mkdir -p /tmp/prometheus-cpp/build \
+##  && cd /tmp/prometheus-cpp/build \
+##  && cmake .. -DBUILD_SHARED_LIBS=ON -DENABLE_PUSH=ON -DENABLE_TESTS=OFF -DCMAKE_BUILD_TYPE=Release \
+##  && make -j$(nproc) && make install \
+##  && rm -rf /tmp/prometheus-cpp
+
 ARG DEBUG="false"
 RUN if [ "$DEBUG" = "true" ]; then apt-get update \
 && apt-get install --no-install-recommends -y gdb gdbserver \

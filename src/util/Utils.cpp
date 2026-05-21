@@ -888,6 +888,18 @@ std::string Utils::send_job(std::string job_group_name, std::string metric_name,
         pushGatewayJobAddr = getJasmineGraphProperty("org.jasminegraph.collector.pushgateway");
     }
 
+    // Allow overriding pushgateway via environment variable for remote workers
+    const char *envPush = getenv("JASMINEGRAPH_PUSHGATEWAY");
+    if (envPush && strlen(envPush) > 0) {
+        pushGatewayJobAddr = std::string(envPush);
+    }
+
+    // Ensure trailing slash semantics are preserved and we append metrics path
+    // pushGatewayJobAddr is expected to be like http://host:9091/ or http://host:9091
+    if (pushGatewayJobAddr.size() > 0 && pushGatewayJobAddr.back() != '/') {
+        pushGatewayJobAddr += '/';
+    }
+
     pushGatewayJobAddr += "metrics/job/";
     if (job_group_name.empty()) {
         job_group_name = "jasminegraph";

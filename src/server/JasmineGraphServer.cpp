@@ -495,9 +495,14 @@ void JasmineGraphServer::startRemoteWorkers(std::vector<int> workerPortsVector, 
                         std::to_string(workerDataPortsVector.at(i)) + " --ENABLE_NMON " + enableNmon;
                 }
             } else {
+                // Pass explicit Pushgateway/Prometheus endpoints into remote worker containers
+                std::string pushgw = Utils::getJasmineGraphProperty("org.jasminegraph.collector.pushgateway");
+                std::string prom = Utils::getJasmineGraphProperty("org.jasminegraph.collector.prometheus");
+                std::string envArg = " -e JASMINEGRAPH_PUSHGATEWAY=\"" + pushgw + "\" -e JASMINEGRAPH_PROMETHEUS=\"" + prom + "\"";
+
                 if (is_testing) {
                     serverStartScript =
-                        "docker -H ssh://" + host + " run" + dockerNetworkArg +
+                        "docker -H ssh://" + host + " run" + dockerNetworkArg + envArg +
                         " -p " + std::to_string(workerPortsVector.at(i)) + ":" +
                         std::to_string(workerPortsVector.at(i)) + " -p " + std::to_string(workerDataPortsVector.at(i)) +
                         ":" + std::to_string(workerDataPortsVector.at(i)) + " -e WORKER_ID=" + to_string(i) +
@@ -507,7 +512,7 @@ void JasmineGraphServer::startRemoteWorkers(std::vector<int> workerPortsVector, 
                         worker_logdir + "/worker.log 2>&1";
                 } else {
                     serverStartScript =
-                        "docker -H ssh://" + host + " run" + dockerNetworkArg +
+                        "docker -H ssh://" + host + " run" + dockerNetworkArg + envArg +
                         " -v " + instanceDataFolder + ":" + instanceDataFolder +
                         " -v " + aggregateDataFolder + ":" + aggregateDataFolder +
                             " -v /var/tmp:/var/tmp/hdfs/filechunks" " -v " + nmonFileLocation + ":" +
