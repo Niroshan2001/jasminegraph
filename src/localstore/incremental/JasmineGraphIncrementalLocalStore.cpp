@@ -373,7 +373,23 @@ void JasmineGraphIncrementalLocalStore::addEdgeFromJson(const json& edgeJson) {
                                         ") Added successfully!");
     // If the edge JSON included ingest metadata, compute latency and push metric
     try {
-      if (edgeJson.contains("properties") && edgeJson["properties"].contains("__ingest_ts_ms")) {
+      if (!edgeJson.contains("properties")) {
+        static std::atomic<uint64_t> missing_properties_count{0};
+        uint64_t count = missing_properties_count.fetch_add(1) + 1;
+        if (count <= 5 || (count % 10000) == 0) {
+          incremental_localstore_logger.warn(
+              "Skipping latency computation because edge JSON has no properties object. edge=" +
+              sId + "-" + dId + ", missing_properties_count=" + std::to_string(count));
+        }
+      } else if (!edgeJson["properties"].contains("__ingest_ts_ms")) {
+        static std::atomic<uint64_t> missing_ingest_ts_key_count{0};
+        uint64_t count = missing_ingest_ts_key_count.fetch_add(1) + 1;
+        if (count <= 5 || (count % 10000) == 0) {
+          incremental_localstore_logger.warn(
+              "Skipping latency computation because __ingest_ts_ms is missing from edge properties. edge=" +
+              sId + "-" + dId + ", missing_key_count=" + std::to_string(count));
+        }
+      } else {
         long long ingest_ts = 0;
         try {
           ingest_ts = edgeJson["properties"]["__ingest_ts_ms"].get<long long>();
