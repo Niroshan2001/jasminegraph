@@ -134,6 +134,7 @@ class WorkerKafkaConsumer {
         std::atomic<uint64_t>& totalMessages,
         std::atomic<uint64_t>& totalLocal,
         std::atomic<uint64_t>& totalCentral,
+        std::atomic<uint64_t>& uniqueEdgesProcessed,
         std::atomic<bool>&     endSignalReceived,
         std::atomic<bool>&     eosSeenAnyThread);
 

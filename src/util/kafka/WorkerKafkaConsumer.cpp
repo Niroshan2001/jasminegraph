@@ -588,6 +588,7 @@ void WorkerKafkaConsumer::consumerThreadFunc(
         std::atomic<uint64_t>& totalMessages,
         std::atomic<uint64_t>& totalLocal,
         std::atomic<uint64_t>& totalCentral,
+        std::atomic<uint64_t>& uniqueEdgesProcessed,
     std::atomic<bool>&     endSignalReceived,
     std::atomic<bool>&     eosSeenAnyThread) {
     auto closeConsumer = [consumer, threadId]() {
@@ -804,6 +805,9 @@ void WorkerKafkaConsumer::consumerThreadFunc(
 
             ++threadMsgs;
             ++totalMessages;
+            if (srcOwned) {
+                ++uniqueEdgesProcessed;
+            }
             if (threadMsgs % 50000 == 0 || (threadMsgs <= 1000 && threadMsgs % 100 == 0)) {
                 workerKafkaLogger().info("Worker thread " + std::to_string(threadId) +
                                          ": " + std::to_string(threadMsgs) + " msgs queued" +
@@ -836,6 +840,7 @@ WorkerKafkaStats WorkerKafkaConsumer::run() {
     std::atomic<uint64_t> totalMessages{0};
     std::atomic<uint64_t> totalLocal   {0};
     std::atomic<uint64_t> totalCentral {0};
+    std::atomic<uint64_t> uniqueEdgesProcessed{0};
     std::atomic<bool>     endSignalReceived{false};
     std::atomic<bool>     eosSeenAnyThread{false};
 
@@ -880,20 +885,21 @@ WorkerKafkaStats WorkerKafkaConsumer::run() {
         auto consumer = std::make_unique<cppkafka::Consumer>(kafkaCfg);
         threads.emplace_back(
             [this, i, c = std::move(consumer),
-                 &totalMessages, &totalLocal, &totalCentral,
+                 &totalMessages, &totalLocal, &totalCentral, &uniqueEdgesProcessed,
                  &endSignalReceived, &eosSeenAnyThread]() mutable {
                 consumerThreadFunc(i, c.get(),
                                    totalMessages, totalLocal, totalCentral,
+                                   uniqueEdgesProcessed,
                            endSignalReceived, eosSeenAnyThread);
             });
     }
 
     // ── Ingestion rate monitoring thread ──────────────────────────────────
-    // Periodically computes edges/sec from totalMessages and pushes the
+    // Periodically computes edges/sec from uniqueEdgesProcessed and pushes the
     // jasminegraph_ingestion_edges_per_second gauge to Prometheus Pushgateway.
     std::atomic<bool> monitorActive{true};
     const std::string ingestionJobName = "ingestion_graph_" + std::to_string(cfg.graphId);
-    std::thread ingestionMonitor([&totalMessages, &monitorActive, ingestionJobName]() {
+    std::thread ingestionMonitor([&uniqueEdgesProcessed, &monitorActive, ingestionJobName]() {
         const int INTERVAL_SECS = 2;  // reporting interval
         uint64_t prevCount = 0;
         auto prevTime = std::chrono::steady_clock::now();
@@ -903,7 +909,7 @@ WorkerKafkaStats WorkerKafkaConsumer::run() {
             if (!monitorActive.load(std::memory_order_relaxed)) break;
 
             auto now = std::chrono::steady_clock::now();
-            uint64_t curCount = totalMessages.load(std::memory_order_relaxed);
+            uint64_t curCount = uniqueEdgesProcessed.load(std::memory_order_relaxed);
             double elapsed = std::chrono::duration<double>(now - prevTime).count();
             if (elapsed <= 0.0) elapsed = 1.0;
 
