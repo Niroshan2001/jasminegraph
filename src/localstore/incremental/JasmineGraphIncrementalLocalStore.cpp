@@ -253,6 +253,16 @@ void JasmineGraphIncrementalLocalStore::printAndSaveHistogram() {
   outFile.close();
 }
 
+std::string JasmineGraphIncrementalLocalStore::serializeHistogramToJson() {
+  std::lock_guard<std::mutex> guard(ingestHistogram.mtx);
+  json j;
+  j["le"] = ingestHistogram.le;
+  j["counts"] = std::vector<uint64_t>(ingestHistogram.counts.begin(), ingestHistogram.counts.end());
+  j["count"] = ingestHistogram.count;
+  j["sum"] = ingestHistogram.sum;
+  return j.dump();
+}
+
 
 std::pair<std::string, unsigned int> JasmineGraphIncrementalLocalStore::getIDs(
     std::string edgeString) {

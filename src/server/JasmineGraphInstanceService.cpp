@@ -5012,11 +5012,14 @@ static void worker_direct_kafka_stream_command(
         instance_logger.error("[CRASH] WorkerKafkaConsumer threw unknown exception");
     }
 
-    // Notify master that this worker is done — always, even on exception
+    // Notify master that this worker is done — always, even on exception.
+    // Include serialized latency histogram so the master can aggregate across workers.
+    std::string histogramJson = JasmineGraphIncrementalLocalStore::serializeHistogramToJson();
     std::string doneMsg = JasmineGraphInstanceProtocol::WORKER_DIRECT_KAFKA_DONE +
                           "|" + std::to_string(stats.totalMessages) +
                           "|" + std::to_string(stats.totalLocal) +
-                          "|" + std::to_string(stats.totalCentral);
+                          "|" + std::to_string(stats.totalCentral) +
+                          "|" + histogramJson;
     if (!Utils::send_str_wrapper(connFd, doneMsg)) {
         instance_logger.error("Failed to send WORKER_DIRECT_KAFKA_DONE to master");
     }

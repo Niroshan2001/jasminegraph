@@ -16,7 +16,10 @@ limitations under the License.
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <cmath>
+#include <fstream>
 #include <future>
+#include <iomanip>
 #include <nlohmann/json.hpp>
 #include <string>
 #include <stdlib.h>
@@ -1142,10 +1145,43 @@ void StreamHandler::listen_to_kafka_topic() {
             });
     }
 
+    // ── Ingestion rate monitoring thread ──────────────────────────────────
+    // Periodically computes edges/sec from totalMessages and pushes the
+    // jasminegraph_ingestion_edges_per_second gauge to Prometheus Pushgateway.
+    std::atomic<bool> monitorActive{true};
+    const std::string ingestionJobName = "ingestion_graph_" + std::to_string(graphId);
+    std::thread ingestionMonitor([&totalMessages, &monitorActive, ingestionJobName]() {
+        const int INTERVAL_SECS = 2;  // reporting interval
+        uint64_t prevCount = 0;
+        auto prevTime = std::chrono::steady_clock::now();
+
+        while (monitorActive.load(std::memory_order_relaxed)) {
+            std::this_thread::sleep_for(std::chrono::seconds(INTERVAL_SECS));
+            if (!monitorActive.load(std::memory_order_relaxed)) break;
+
+            auto now = std::chrono::steady_clock::now();
+            uint64_t curCount = totalMessages.load(std::memory_order_relaxed);
+            double elapsed = std::chrono::duration<double>(now - prevTime).count();
+            if (elapsed <= 0.0) elapsed = 1.0;
+
+            double edgesPerSec = (curCount - prevCount) / elapsed;
+            Utils::send_job(ingestionJobName, "jasminegraph_ingestion_edges_per_second",
+                            std::to_string(edgesPerSec));
+
+            prevCount = curCount;
+            prevTime = now;
+        }
+    });
+
     // Wait for all consumer threads to finish
     for (auto& t : consumerThreads) {
         if (t.joinable()) t.join();
     }
+
+    // Stop the ingestion rate monitor and push a final zero
+    monitorActive.store(false, std::memory_order_relaxed);
+    if (ingestionMonitor.joinable()) ingestionMonitor.join();
+    Utils::send_job(ingestionJobName, "jasminegraph_ingestion_edges_per_second", "0");
 
     streamHandlerLogger().info("All consumer threads finished. Total messages: " +
                                std::to_string(totalMessages.load()) +
@@ -1276,6 +1312,9 @@ void StreamHandler::listenViaDirectWorkers(
     struct DoneStats {
         std::atomic<uint64_t> totalMessages{0}, totalLocal{0}, totalCentral{0};
         std::atomic<int> successCount{0};
+        // Per-worker histogram JSON strings collected from done messages
+        std::mutex histogramMutex;
+        std::vector<std::string> histogramJsons;
     };
     auto doneStats = std::make_shared<DoneStats>();
     int n_started = 0;
@@ -1397,6 +1436,8 @@ void StreamHandler::listenViaDirectWorkers(
             const std::string& donePrefix = JasmineGraphInstanceProtocol::WORKER_DIRECT_KAFKA_DONE;
             if (doneMsg.size() >= donePrefix.size() &&
                 doneMsg.substr(0, donePrefix.size()) == donePrefix) {
+                // Split only the first 4 pipe delimiters to avoid splitting inside histogram JSON
+                // Format: prefix|msgs|local|central|{json...}
                 auto parts = Utils::split(doneMsg, '|');
                 if (parts.size() >= 4) {
                     doneStats->totalMessages.fetch_add(std::stoull(parts[1]));
@@ -1406,6 +1447,29 @@ void StreamHandler::listenViaDirectWorkers(
                     streamHandlerLogger().warn("[DONE MSG] Worker " + std::to_string(wi) +
                                                " done msg had only " + std::to_string(parts.size()) +
                                                " parts: '" + doneMsg + "'");
+                }
+                // Extract histogram JSON (everything after the 4th '|')
+                if (parts.size() >= 5) {
+                    // Reconstruct the JSON in case it contained '|' (unlikely but safe)
+                    size_t jsonStart = 0;
+                    int pipeCount = 0;
+                    for (size_t i = 0; i < doneMsg.size() && pipeCount < 4; ++i) {
+                        if (doneMsg[i] == '|') {
+                            pipeCount++;
+                            if (pipeCount == 4) jsonStart = i + 1;
+                        }
+                    }
+                    if (jsonStart > 0 && jsonStart < doneMsg.size()) {
+                        std::string histJson = doneMsg.substr(jsonStart);
+                        std::lock_guard<std::mutex> lock(doneStats->histogramMutex);
+                        doneStats->histogramJsons.push_back(histJson);
+                        streamHandlerLogger().info("[DONE MSG] Worker " + std::to_string(wi) +
+                                                   " histogram JSON collected (" +
+                                                   std::to_string(histJson.size()) + " bytes)");
+                    }
+                } else {
+                    streamHandlerLogger().warn("[DONE MSG] Worker " + std::to_string(wi) +
+                                               ": no histogram data in done message");
                 }
                 doneStats->successCount.fetch_add(1);
                 streamHandlerLogger().info("[DONE MSG] Worker " + std::to_string(wi) +
@@ -1437,8 +1501,142 @@ void StreamHandler::listenViaDirectWorkers(
                                    " central=" + std::to_string(doneStats->totalCentral.load()) +
                                    " successCount=" + std::to_string(doneStats->successCount.load()) +
                                    "/" + std::to_string(n_started));
+        // Reset the ingestion rate gauge to zero now that all workers are done
+        Utils::send_job("ingestion_graph_" + std::to_string(graphId),
+                        "jasminegraph_ingestion_edges_per_second", "0");
     } else {
         streamHandlerLogger().warn("[READY] No workers started successfully for topic '" + topic + "'.");
+    }
+
+    // ── Aggregate worker histograms and write latency summary CSV ──────────
+    if (!doneStats->histogramJsons.empty()) {
+        try {
+            // Merged histogram buckets (use first worker's bucket boundaries as reference)
+            std::vector<double> mergedLe;
+            std::vector<uint64_t> mergedCounts;
+            uint64_t mergedCount = 0;
+            double mergedSum = 0.0;
+
+            for (const auto& histStr : doneStats->histogramJsons) {
+                try {
+                    auto hj = nlohmann::json::parse(histStr);
+                    auto le = hj["le"].get<std::vector<double>>();
+                    auto counts = hj["counts"].get<std::vector<uint64_t>>();
+                    uint64_t cnt = hj["count"].get<uint64_t>();
+                    double s = hj["sum"].get<double>();
+
+                    if (mergedLe.empty()) {
+                        // First worker — initialize merged structure
+                        mergedLe = le;
+                        mergedCounts = counts;
+                        mergedCount = cnt;
+                        mergedSum = s;
+                    } else {
+                        // Sum bucket counts element-wise
+                        for (size_t i = 0; i < counts.size() && i < mergedCounts.size(); ++i) {
+                            mergedCounts[i] += counts[i];
+                        }
+                        mergedCount += cnt;
+                        mergedSum += s;
+                    }
+                } catch (const std::exception& e) {
+                    streamHandlerLogger().warn("[HISTOGRAM] Failed to parse worker histogram: " +
+                                               std::string(e.what()));
+                }
+            }
+
+            if (mergedCount > 0) {
+                // Build cumulative counts for percentile computation
+                std::vector<uint64_t> cumulative(mergedCounts.size());
+                uint64_t running = 0;
+                for (size_t i = 0; i < mergedCounts.size(); ++i) {
+                    running += mergedCounts[i];
+                    cumulative[i] = running;
+                }
+
+                // Percentile computation via linear interpolation within histogram buckets.
+                // For a given percentile p (0-100), find the bucket where the cumulative
+                // count first exceeds (p/100 * totalCount), then interpolate within that bucket.
+                auto computePercentile = [&](double p) -> double {
+                    double rank = (p / 100.0) * mergedCount;
+                    if (rank <= 0) return 0.0;
+                    // Find the bucket where cumulative >= rank
+                    double prevBound = 0.0;
+                    uint64_t prevCum = 0;
+                    for (size_t i = 0; i < cumulative.size(); ++i) {
+                        double upperBound = (i < mergedLe.size()) ? mergedLe[i] : (mergedLe.empty() ? 10000 : mergedLe.back() * 2);
+                        if (cumulative[i] >= static_cast<uint64_t>(std::ceil(rank))) {
+                            // Linear interpolation within this bucket
+                            uint64_t bucketCount = mergedCounts[i];
+                            if (bucketCount == 0) return upperBound;
+                            double fraction = (rank - prevCum) / static_cast<double>(bucketCount);
+                            return prevBound + fraction * (upperBound - prevBound);
+                        }
+                        prevBound = upperBound;
+                        prevCum = cumulative[i];
+                    }
+                    return mergedLe.empty() ? 0.0 : mergedLe.back();
+                };
+
+                // Write CSV
+                std::string folderLocation = Utils::getJasmineGraphProperty(
+                    "org.jasminegraph.server.instance.datafolder");
+                if (folderLocation.empty()) {
+                    folderLocation = "/var/tmp/jasminegraph-localstore-tmp";
+                }
+                Utils::createDirectory(folderLocation);
+
+                std::string csvPath = folderLocation + "/latency_summary_graph_" +
+                                      std::to_string(graphId) + ".csv";
+                std::ofstream csvFile(csvPath, std::ios::out | std::ios::trunc);
+                if (csvFile.is_open()) {
+                    csvFile << std::fixed << std::setprecision(2);
+                    csvFile << "metric,value\n";
+                    csvFile << "total_edges," << mergedCount << "\n";
+                    csvFile << "sum_latency_ms," << mergedSum << "\n";
+                    csvFile << "avg_latency_ms," << (mergedSum / mergedCount) << "\n";
+
+                    // All integer percentiles p1 through p99
+                    for (int p = 1; p <= 99; ++p) {
+                        csvFile << "p" << p << "_latency_ms," << computePercentile(p) << "\n";
+                    }
+                    // Fine-grained tail percentiles
+                    csvFile << "p99.9_latency_ms," << computePercentile(99.9) << "\n";
+                    csvFile << "p99.99_latency_ms," << computePercentile(99.99) << "\n";
+
+                    // Raw bucket counts (non-cumulative) for histogram plotting
+                    for (size_t i = 0; i < mergedCounts.size(); ++i) {
+                        if (i < mergedLe.size()) {
+                            csvFile << "bucket_le_" << static_cast<int>(mergedLe[i]) << "_count,"
+                                    << mergedCounts[i] << "\n";
+                        } else {
+                            csvFile << "bucket_le_inf_count," << mergedCounts[i] << "\n";
+                        }
+                    }
+                    // Cumulative bucket counts for CDF plotting
+                    for (size_t i = 0; i < cumulative.size(); ++i) {
+                        if (i < mergedLe.size()) {
+                            csvFile << "cumulative_le_" << static_cast<int>(mergedLe[i]) << "_count,"
+                                    << cumulative[i] << "\n";
+                        } else {
+                            csvFile << "cumulative_le_inf_count," << cumulative[i] << "\n";
+                        }
+                    }
+
+                    csvFile.close();
+                    streamHandlerLogger().info("[HISTOGRAM] Wrote consolidated latency CSV: " + csvPath);
+                } else {
+                    streamHandlerLogger().error("[HISTOGRAM] Failed to open CSV file: " + csvPath);
+                }
+            } else {
+                streamHandlerLogger().info("[HISTOGRAM] No latency observations to aggregate (count=0)");
+            }
+        } catch (const std::exception& e) {
+            streamHandlerLogger().error("[HISTOGRAM] Error aggregating histograms: " +
+                                       std::string(e.what()));
+        }
+    } else {
+        streamHandlerLogger().info("[HISTOGRAM] No worker histogram data received — skipping CSV");
     }
 
     // Update partition metadata DB now (does not require streaming to be complete).

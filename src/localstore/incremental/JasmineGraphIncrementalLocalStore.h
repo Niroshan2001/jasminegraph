@@ -46,6 +46,10 @@ class JasmineGraphIncrementalLocalStore {
     ~JasmineGraphIncrementalLocalStore();
     bool getAndStoreEmbeddings();
     void printAndSaveHistogram();
+
+    // Serialize the process-global IngestLatencyHistogram into a JSON string.
+    // Used by workers to send histogram data back to the master.
+    static std::string serializeHistogramToJson();
     void addLocalEdge(std::string edge);
     void addCentralEdge(std::string edge);
     void addNodeMetaProperty(NodeBlock* nodeBlock, std::string propertyKey, std::string propertyValue);

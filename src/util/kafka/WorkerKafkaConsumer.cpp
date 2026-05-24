@@ -888,9 +888,42 @@ WorkerKafkaStats WorkerKafkaConsumer::run() {
             });
     }
 
+    // ── Ingestion rate monitoring thread ──────────────────────────────────
+    // Periodically computes edges/sec from totalMessages and pushes the
+    // jasminegraph_ingestion_edges_per_second gauge to Prometheus Pushgateway.
+    std::atomic<bool> monitorActive{true};
+    const std::string ingestionJobName = "ingestion_graph_" + std::to_string(cfg.graphId);
+    std::thread ingestionMonitor([&totalMessages, &monitorActive, ingestionJobName]() {
+        const int INTERVAL_SECS = 2;  // reporting interval
+        uint64_t prevCount = 0;
+        auto prevTime = std::chrono::steady_clock::now();
+
+        while (monitorActive.load(std::memory_order_relaxed)) {
+            std::this_thread::sleep_for(std::chrono::seconds(INTERVAL_SECS));
+            if (!monitorActive.load(std::memory_order_relaxed)) break;
+
+            auto now = std::chrono::steady_clock::now();
+            uint64_t curCount = totalMessages.load(std::memory_order_relaxed);
+            double elapsed = std::chrono::duration<double>(now - prevTime).count();
+            if (elapsed <= 0.0) elapsed = 1.0;
+
+            double edgesPerSec = (curCount - prevCount) / elapsed;
+            Utils::send_job(ingestionJobName, "jasminegraph_ingestion_edges_per_second",
+                            std::to_string(edgesPerSec));
+
+            prevCount = curCount;
+            prevTime = now;
+        }
+    });
+
     for (auto& t : threads) {
         if (t.joinable()) t.join();
     }
+
+    // Stop the ingestion rate monitor and push a final zero
+    monitorActive.store(false, std::memory_order_relaxed);
+    if (ingestionMonitor.joinable()) ingestionMonitor.join();
+    Utils::send_job(ingestionJobName, "jasminegraph_ingestion_edges_per_second", "0");
 
     // Stop the snapshot timer thread and wait for it to finish
     snapshotTimerActive_.store(false, std::memory_order_relaxed);
