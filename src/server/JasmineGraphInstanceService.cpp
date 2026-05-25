@@ -22,6 +22,8 @@ limitations under the License.
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <fstream>
+#include <iomanip>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -5015,6 +5017,103 @@ static void worker_direct_kafka_stream_command(
     // Notify master that this worker is done — always, even on exception.
     // Include serialized latency histogram so the master can aggregate across workers.
     std::string histogramJson = JasmineGraphIncrementalLocalStore::serializeHistogramToJson();
+
+    // ── Write per-worker latency CSV with percentiles ─────────────────────
+    try {
+        auto hj = nlohmann::json::parse(histogramJson);
+        auto le = hj["le"].get<std::vector<double>>();
+        auto counts = hj["counts"].get<std::vector<uint64_t>>();
+        uint64_t totalCount = hj["count"].get<uint64_t>();
+        double totalSum = hj["sum"].get<double>();
+
+        if (totalCount > 0) {
+            // Build cumulative counts
+            std::vector<uint64_t> cumulative(counts.size());
+            uint64_t running = 0;
+            for (size_t i = 0; i < counts.size(); ++i) {
+                running += counts[i];
+                cumulative[i] = running;
+            }
+
+            // Percentile via linear interpolation within histogram buckets
+            auto computePercentile = [&](double p) -> double {
+                double rank = (p / 100.0) * totalCount;
+                if (rank <= 0) return 0.0;
+                double prevBound = 0.0;
+                uint64_t prevCum = 0;
+                for (size_t i = 0; i < cumulative.size(); ++i) {
+                    double upperBound = (i < le.size()) ? le[i]
+                        : (le.empty() ? 10000 : le.back() * 2);
+                    if (cumulative[i] >= static_cast<uint64_t>(std::ceil(rank))) {
+                        uint64_t bucketCount = counts[i];
+                        if (bucketCount == 0) return upperBound;
+                        double fraction = (rank - prevCum) / static_cast<double>(bucketCount);
+                        return prevBound + fraction * (upperBound - prevBound);
+                    }
+                    prevBound = upperBound;
+                    prevCum = cumulative[i];
+                }
+                return le.empty() ? 0.0 : le.back();
+            };
+
+            std::string folderLocation = Utils::getJasmineGraphProperty(
+                "org.jasminegraph.server.instance.datafolder");
+            if (folderLocation.empty()) {
+                folderLocation = "/var/tmp/jasminegraph-localstore-tmp";
+            }
+            Utils::createDirectory(folderLocation);
+
+            std::string csvPath = folderLocation + "/latency_summary_graph_" +
+                                  std::to_string(cfg.graphId) + "_worker_" +
+                                  std::to_string(cfg.workerIndex) + ".csv";
+            std::ofstream csvFile(csvPath, std::ios::out | std::ios::trunc);
+            if (csvFile.is_open()) {
+                csvFile << std::fixed << std::setprecision(2);
+                csvFile << "metric,value\n";
+                csvFile << "total_edges," << totalCount << "\n";
+                csvFile << "sum_latency_ms," << totalSum << "\n";
+                csvFile << "avg_latency_ms," << (totalSum / totalCount) << "\n";
+
+                // All integer percentiles p1 through p99
+                for (int p = 1; p <= 99; ++p) {
+                    csvFile << "p" << p << "_latency_ms," << computePercentile(p) << "\n";
+                }
+                // Fine-grained tail percentiles
+                csvFile << "p99.9_latency_ms," << computePercentile(99.9) << "\n";
+                csvFile << "p99.99_latency_ms," << computePercentile(99.99) << "\n";
+
+                // Raw bucket counts for histogram plotting
+                for (size_t i = 0; i < counts.size(); ++i) {
+                    if (i < le.size()) {
+                        csvFile << "bucket_le_" << static_cast<int>(le[i]) << "_count,"
+                                << counts[i] << "\n";
+                    } else {
+                        csvFile << "bucket_le_inf_count," << counts[i] << "\n";
+                    }
+                }
+                // Cumulative bucket counts for CDF plotting
+                for (size_t i = 0; i < cumulative.size(); ++i) {
+                    if (i < le.size()) {
+                        csvFile << "cumulative_le_" << static_cast<int>(le[i]) << "_count,"
+                                << cumulative[i] << "\n";
+                    } else {
+                        csvFile << "cumulative_le_inf_count," << cumulative[i] << "\n";
+                    }
+                }
+
+                csvFile.close();
+                instance_logger.info("[HISTOGRAM] Wrote per-worker latency CSV: " + csvPath);
+            } else {
+                instance_logger.error("[HISTOGRAM] Failed to open CSV file: " + csvPath);
+            }
+        } else {
+            instance_logger.info("[HISTOGRAM] No latency observations on this worker (count=0)");
+        }
+    } catch (const std::exception& e) {
+        instance_logger.error("[HISTOGRAM] Error writing per-worker latency CSV: " +
+                             std::string(e.what()));
+    }
+
     std::string doneMsg = JasmineGraphInstanceProtocol::WORKER_DIRECT_KAFKA_DONE +
                           "|" + std::to_string(stats.totalMessages) +
                           "|" + std::to_string(stats.totalLocal) +
