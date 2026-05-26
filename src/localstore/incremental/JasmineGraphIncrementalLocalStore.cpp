@@ -263,6 +263,53 @@ std::string JasmineGraphIncrementalLocalStore::serializeHistogramToJson() {
   return j.dump();
 }
 
+void JasmineGraphIncrementalLocalStore::observeLatency(double latency_ms) {
+  {
+    std::lock_guard<std::mutex> guard(ingestHistogram.mtx);
+    bool placed = false;
+    for (size_t i = 0; i < ingestHistogram.le.size(); ++i) {
+      if (latency_ms <= ingestHistogram.le[i]) {
+        ingestHistogram.counts[i]++;
+        placed = true;
+        break;
+      }
+    }
+    if (!placed) {
+      ingestHistogram.counts.back()++;  // +Inf bucket
+    }
+    ingestHistogram.count++;
+    ingestHistogram.sum += latency_ms;
+    ingestHistogram.observations_since_push.fetch_add(1);
+
+    // Progress logging every 100,000 observations
+    if (ingestHistogram.count % 100000 == 0) {
+      std::vector<uint64_t> cumulative(ingestHistogram.counts.size());
+      uint64_t running = 0;
+      for (size_t j = 0; j < ingestHistogram.counts.size(); ++j) {
+        running += ingestHistogram.counts[j];
+        cumulative[j] = running;
+      }
+      std::ostringstream progressOss;
+      progressOss << "\n--- Latency Histogram Progress (Count: " << ingestHistogram.count << ") ---\n";
+      progressOss << "Average latency: " << std::fixed << std::setprecision(2) << (ingestHistogram.sum / ingestHistogram.count) << " ms\n";
+      for (size_t j = 0; j < cumulative.size(); ++j) {
+        if (j < ingestHistogram.le.size()) {
+          progressOss << "  le <= " << std::fixed << std::noshowpoint << ingestHistogram.le[j] << " ms: " << cumulative[j] << "\n";
+        } else {
+          progressOss << "  le <=    +Inf ms: " << cumulative[j] << "\n";
+        }
+      }
+      progressOss << "--------------------------------------------------------\n";
+      incremental_localstore_logger.info(progressOss.str());
+    }
+  }
+
+  // Periodically push snapshot so Prometheus sees cumulative buckets
+  if (ingestHistogram.observations_since_push.load() >= HIST_PUSH_THRESHOLD) {
+    pushHistogramSnapshot();
+  }
+}
+
 
 std::pair<std::string, unsigned int> JasmineGraphIncrementalLocalStore::getIDs(
     std::string edgeString) {

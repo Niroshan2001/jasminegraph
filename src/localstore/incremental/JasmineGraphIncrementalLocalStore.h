@@ -50,6 +50,11 @@ class JasmineGraphIncrementalLocalStore {
     // Serialize the process-global IngestLatencyHistogram into a JSON string.
     // Used by workers to send histogram data back to the master.
     static std::string serializeHistogramToJson();
+
+    // Record a single latency observation (ms) in the process-global histogram.
+    // Thread-safe.  Use this when the native-store write path (addEdgeFromJson)
+    // is bypassed (e.g. temporal-only streaming mode).
+    static void observeLatency(double latency_ms);
     void addLocalEdge(std::string edge);
     void addCentralEdge(std::string edge);
     void addNodeMetaProperty(NodeBlock* nodeBlock, std::string propertyKey, std::string propertyValue);

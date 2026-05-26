@@ -803,6 +803,34 @@ void WorkerKafkaConsumer::consumerThreadFunc(
                 }
             }
 
+            // ── 6. LATENCY OBSERVATION (temporal-only mode) ───────────────
+            // When temporalOnlyMode_ is true, addEdgeFromJson() is never
+            // called so the process-global latency histogram would stay empty.
+            // Record the observation directly here using the __ingest_ts_ms
+            // that normalizeKafkaPayloadToEdgeJson() already injected.
+            if (temporalOnlyMode_) {
+                try {
+                    if (prop.contains("__ingest_ts_ms")) {
+                        long long ingest_ts = 0;
+                        try {
+                            ingest_ts = prop["__ingest_ts_ms"].get<long long>();
+                        } catch (...) {
+                            try {
+                                ingest_ts = std::stoll(prop["__ingest_ts_ms"].get<std::string>());
+                            } catch (...) { ingest_ts = 0; }
+                        }
+                        if (ingest_ts > 0) {
+                            long long now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::system_clock::now().time_since_epoch()).count();
+                            double latency_ms = static_cast<double>(now_ms - ingest_ts);
+                            JasmineGraphIncrementalLocalStore::observeLatency(latency_ms);
+                        }
+                    }
+                } catch (...) {
+                    // Latency recording is best-effort; don't let it break ingestion
+                }
+            }
+
             ++threadMsgs;
             ++totalMessages;
             if (srcOwned) {

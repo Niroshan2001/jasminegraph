@@ -22,6 +22,7 @@ limitations under the License.
 #include <iomanip>
 #include <nlohmann/json.hpp>
 #include <string>
+#include <sstream>
 #include <stdlib.h>
 #include <sys/socket.h>
 #include <netdb.h>
@@ -1299,6 +1300,9 @@ void StreamHandler::listenViaDirectWorkers(
     streamHandlerLogger().info("Dispatching direct Kafka stream to " +
                                std::to_string(n_workers) + " workers for topic '" + topic + "'");
 
+    // Capture wall-clock start time for average ingestion rate computation
+    auto ingestionStartTime = std::chrono::steady_clock::now();
+
     // ── Two-phase dispatch ────────────────────────────────────────────────
     //
     // Phase 1 (synchronous): connect to every worker, send Kafka config,
@@ -1501,6 +1505,25 @@ void StreamHandler::listenViaDirectWorkers(
                                    " central=" + std::to_string(doneStats->totalCentral.load()) +
                                    " successCount=" + std::to_string(doneStats->successCount.load()) +
                                    "/" + std::to_string(n_started));
+
+        // Compute and log average ingestion rate
+        auto ingestionEndTime = std::chrono::steady_clock::now();
+        double elapsedSecs = std::chrono::duration<double>(ingestionEndTime - ingestionStartTime).count();
+        uint64_t totalEdges = doneStats->totalMessages.load();
+        double avgRate = (elapsedSecs > 0.0) ? (totalEdges / elapsedSecs) : 0.0;
+        std::ostringstream rateOss;
+        rateOss << std::fixed << std::setprecision(2);
+        rateOss << "[INGESTION SUMMARY] graph=" << graphId
+                << " totalEdges=" << totalEdges
+                << " elapsed=" << elapsedSecs << "s"
+                << " avgRate=" << avgRate << " edges/sec";
+        streamHandlerLogger().info(rateOss.str());
+
+        // Push the final average rate to Prometheus/Grafana
+        Utils::send_job("ingestion_graph_" + std::to_string(graphId),
+                        "jasminegraph_ingestion_avg_edges_per_second",
+                        std::to_string(avgRate));
+
         // Reset the ingestion rate gauge to zero now that all workers are done
         Utils::send_job("ingestion_graph_" + std::to_string(graphId),
                         "jasminegraph_ingestion_edges_per_second", "0");
