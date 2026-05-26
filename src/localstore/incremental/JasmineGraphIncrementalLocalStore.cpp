@@ -65,7 +65,7 @@ struct IngestLatencyHistogram {
   }
 } ingestHistogram;
 
-static size_t HIST_PUSH_THRESHOLD = 1; // push snapshot after this many observations
+static size_t HIST_PUSH_THRESHOLD = 100000; // push snapshot after this many observations
 
 static void pushHistogramSnapshot() {
   std::lock_guard<std::mutex> guard(ingestHistogram.mtx);
@@ -96,8 +96,6 @@ static void pushHistogramSnapshot() {
   std::ostringstream sumStr;
   sumStr << std::fixed << ingestHistogram.sum;
   Utils::send_job("", "jasminegraph_ingestion_latency_ms_sum", sumStr.str());
-
-  ingestHistogram.observations_since_push.store(0);
 }
 
 #ifdef USE_PROMETHEUS_CPP
@@ -264,25 +262,38 @@ std::string JasmineGraphIncrementalLocalStore::serializeHistogramToJson() {
 }
 
 void JasmineGraphIncrementalLocalStore::observeLatency(double latency_ms) {
-  {
+  static thread_local std::vector<uint64_t> local_counts(ingestHistogram.le.size() + 1, 0);
+  static thread_local uint64_t local_count = 0;
+  static thread_local double local_sum = 0.0;
+
+  bool placed = false;
+  for (size_t i = 0; i < ingestHistogram.le.size(); ++i) {
+    if (latency_ms <= ingestHistogram.le[i]) {
+      local_counts[i]++;
+      placed = true;
+      break;
+    }
+  }
+  if (!placed) {
+    local_counts.back()++;  // +Inf bucket
+  }
+  local_count++;
+  local_sum += latency_ms;
+
+  if (local_count >= 1000) {
     std::lock_guard<std::mutex> guard(ingestHistogram.mtx);
-    bool placed = false;
-    for (size_t i = 0; i < ingestHistogram.le.size(); ++i) {
-      if (latency_ms <= ingestHistogram.le[i]) {
-        ingestHistogram.counts[i]++;
-        placed = true;
-        break;
-      }
+    for (size_t i = 0; i < local_counts.size(); ++i) {
+      ingestHistogram.counts[i] += local_counts[i];
+      local_counts[i] = 0;
     }
-    if (!placed) {
-      ingestHistogram.counts.back()++;  // +Inf bucket
-    }
-    ingestHistogram.count++;
-    ingestHistogram.sum += latency_ms;
-    ingestHistogram.observations_since_push.fetch_add(1);
+    
+    uint64_t previous_count = ingestHistogram.count;
+    ingestHistogram.count += local_count;
+    ingestHistogram.sum += local_sum;
+    ingestHistogram.observations_since_push.fetch_add(local_count);
 
     // Progress logging every 100,000 observations
-    if (ingestHistogram.count % 100000 == 0) {
+    if ((previous_count / 100000) != (ingestHistogram.count / 100000)) {
       std::vector<uint64_t> cumulative(ingestHistogram.counts.size());
       uint64_t running = 0;
       for (size_t j = 0; j < ingestHistogram.counts.size(); ++j) {
@@ -302,11 +313,39 @@ void JasmineGraphIncrementalLocalStore::observeLatency(double latency_ms) {
       progressOss << "--------------------------------------------------------\n";
       incremental_localstore_logger.info(progressOss.str());
     }
+
+    local_count = 0;
+    local_sum = 0.0;
   }
+
+#ifdef USE_PROMETHEUS_CPP
+  initPrometheusClient();
+  if (promLatencyHist) {
+    promLatencyHist->Observe(latency_ms);
+  }
+#endif
 
   // Periodically push snapshot so Prometheus sees cumulative buckets
   if (ingestHistogram.observations_since_push.load() >= HIST_PUSH_THRESHOLD) {
-    pushHistogramSnapshot();
+    uint64_t expected = ingestHistogram.observations_since_push.load();
+    if (expected >= HIST_PUSH_THRESHOLD) {
+      if (ingestHistogram.observations_since_push.compare_exchange_strong(expected, 0)) {
+        bool pushed_via_prom = false;
+#ifdef USE_PROMETHEUS_CPP
+        if (promPushGateway) {
+          try {
+            promPushGateway->PushAdd(*promRegistry, "jasminegraph");
+            pushed_via_prom = true;
+          } catch (...) {
+            incremental_localstore_logger.debug("prometheus push failed");
+          }
+        }
+#endif
+        if (!pushed_via_prom) {
+          pushHistogramSnapshot();
+        }
+      }
+    }
   }
 }
 
@@ -425,74 +464,7 @@ void JasmineGraphIncrementalLocalStore::addEdgeFromJson(const json& edgeJson) {
               std::chrono::system_clock::now().time_since_epoch()).count();
           long long latency_ms = now_ms - ingest_ts;
 
-          // Update in-process histogram
-          {
-            std::lock_guard<std::mutex> guard(ingestHistogram.mtx);
-            // find the first bucket with le >= latency_ms
-            bool placed = false;
-            for (size_t i = 0; i < ingestHistogram.le.size(); ++i) {
-              if (latency_ms <= static_cast<long long>(ingestHistogram.le[i])) {
-                ingestHistogram.counts[i]++;
-                placed = true;
-                break;
-              }
-            }
-            if (!placed) {
-              // +Inf bucket
-              ingestHistogram.counts.back()++;
-            }
-            ingestHistogram.count++;
-            ingestHistogram.sum += static_cast<double>(latency_ms);
-            ingestHistogram.observations_since_push.fetch_add(1);
-
-            // Progress logging: print current histogram state every 100,000 observations
-            if (ingestHistogram.count % 100000 == 0) {
-              std::vector<uint64_t> cumulative(ingestHistogram.counts.size());
-              uint64_t running = 0;
-              for (size_t j = 0; j < ingestHistogram.counts.size(); ++j) {
-                running += ingestHistogram.counts[j];
-                cumulative[j] = running;
-              }
-              std::ostringstream progressOss;
-              progressOss << "\n--- Latency Histogram Progress (Count: " << ingestHistogram.count << ") ---\n";
-              progressOss << "Average latency: " << std::fixed << std::setprecision(2) << (ingestHistogram.sum / ingestHistogram.count) << " ms\n";
-              for (size_t j = 0; j < cumulative.size(); ++j) {
-                if (j < ingestHistogram.le.size()) {
-                  progressOss << "  le <= " << std::fixed << std::noshowpoint << ingestHistogram.le[j] << " ms: " << cumulative[j] << "\n";
-                } else {
-                  progressOss << "  le <=    +Inf ms: " << cumulative[j] << "\n";
-                }
-              }
-              progressOss << "--------------------------------------------------------\n";
-              incremental_localstore_logger.info(progressOss.str());
-            }
-          }
-
-          bool pushed_via_prom = false;
-#ifdef USE_PROMETHEUS_CPP
-          initPrometheusClient();
-          if (promLatencyHist) {
-            promLatencyHist->Observe(static_cast<double>(latency_ms));
-            // Push periodically to Pushgateway to avoid high overhead
-            if (!promPushGateway) {
-              // fallback: do nothing, rely on registry being scraped (not configured)
-            } else {
-              // push with job name 'jasminegraph' and no grouping labels
-              try {
-                promPushGateway->PushAdd(*promRegistry, "jasminegraph");
-                pushed_via_prom = true;
-              } catch (...) {
-                incremental_localstore_logger.debug("prometheus push failed");
-              }
-            }
-          }
-#endif
-          if (!pushed_via_prom) {
-            // Periodically push snapshot so Prometheus sees cumulative buckets
-            if (ingestHistogram.observations_since_push.load() >= HIST_PUSH_THRESHOLD) {
-              pushHistogramSnapshot();
-            }
-          }
+          JasmineGraphIncrementalLocalStore::observeLatency(static_cast<double>(latency_ms));
         }
       }
     } catch (...) {
