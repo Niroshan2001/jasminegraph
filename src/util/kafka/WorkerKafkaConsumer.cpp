@@ -846,6 +846,8 @@ void WorkerKafkaConsumer::consumerThreadFunc(
 
     workerKafkaLogger().info("Worker consumer thread " + std::to_string(threadId) +
                              " finished. Messages processed: " + std::to_string(threadMsgs));
+    // Flush remaining thread-local latency observations before thread exit
+    JasmineGraphIncrementalLocalStore::flushLocalLatency();
     closeConsumer();
     } catch (const std::exception& e) {
         workerKafkaLogger().error("[CRASH] consumerThreadFunc thread " + std::to_string(threadId) +

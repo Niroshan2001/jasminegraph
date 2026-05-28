@@ -55,6 +55,11 @@ class JasmineGraphIncrementalLocalStore {
     // Thread-safe.  Use this when the native-store write path (addEdgeFromJson)
     // is bypassed (e.g. temporal-only streaming mode).
     static void observeLatency(double latency_ms);
+
+    // Flush remaining thread-local latency observations into the global histogram.
+    // Must be called at the end of each consumer thread before it exits to ensure
+    // no observations are lost (the last <1000 batch).
+    static void flushLocalLatency();
     void addLocalEdge(std::string edge);
     void addCentralEdge(std::string edge);
     void addNodeMetaProperty(NodeBlock* nodeBlock, std::string propertyKey, std::string propertyValue);

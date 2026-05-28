@@ -24,6 +24,9 @@ limitations under the License.
 #include <sstream>
 #include <fstream>
 #include <iomanip>
+#include <unordered_map>
+#include <algorithm>
+#include <cmath>
 #if defined(ENABLE_PROMETHEUS_CPP)
   /* Only include prometheus-cpp headers if they are actually available on the
      include path. Some build environments may define ENABLE_PROMETHEUS_CPP via
@@ -58,6 +61,8 @@ struct IngestLatencyHistogram {
   double sum = 0.0;                 // sum of latencies
   std::mutex mtx;
   std::atomic<uint64_t> observations_since_push{0};
+  // Exact latency counts: key = latency in ms (rounded), value = count
+  std::unordered_map<long long, uint64_t> exact_counts;
   IngestLatencyHistogram() {
     // Example buckets in milliseconds (suitable for edge ingest latencies)
     le = {5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000};
@@ -249,6 +254,27 @@ void JasmineGraphIncrementalLocalStore::printAndSaveHistogram() {
   incremental_localstore_logger.info(outputStr);
   outFile << outputStr;
   outFile.close();
+
+  // Write exact latency counts CSV (sorted by latency)
+  if (!ingestHistogram.exact_counts.empty()) {
+    std::string exactCsvPath = folderLocation + "/latency_exact_graph_" +
+                               std::to_string(gc.graphID) + "_partition_" +
+                               std::to_string(gc.partitionID) + ".csv";
+    std::ofstream exactCsv(exactCsvPath, std::ios::out | std::ios::trunc);
+    if (exactCsv.is_open()) {
+      exactCsv << "latency_ms,count\n";
+      std::vector<std::pair<long long, uint64_t>> sorted_counts(
+          ingestHistogram.exact_counts.begin(), ingestHistogram.exact_counts.end());
+      std::sort(sorted_counts.begin(), sorted_counts.end());
+      for (const auto& entry : sorted_counts) {
+        exactCsv << entry.first << "," << entry.second << "\n";
+      }
+      exactCsv.close();
+      incremental_localstore_logger.info("Wrote exact latency CSV: " + exactCsvPath);
+    } else {
+      incremental_localstore_logger.error("Failed to open exact latency CSV: " + exactCsvPath);
+    }
+  }
 }
 
 std::string JasmineGraphIncrementalLocalStore::serializeHistogramToJson() {
@@ -258,13 +284,49 @@ std::string JasmineGraphIncrementalLocalStore::serializeHistogramToJson() {
   j["counts"] = std::vector<uint64_t>(ingestHistogram.counts.begin(), ingestHistogram.counts.end());
   j["count"] = ingestHistogram.count;
   j["sum"] = ingestHistogram.sum;
+  // Include exact latency counts as a JSON object {"latency_ms": count, ...}
+  json exactJson = json::object();
+  for (const auto& [lat, cnt] : ingestHistogram.exact_counts) {
+    exactJson[std::to_string(lat)] = cnt;
+  }
+  j["exact_counts"] = exactJson;
   return j.dump();
+}
+
+void JasmineGraphIncrementalLocalStore::flushLocalLatency() {
+  // This is called from the same thread that was accumulating latency data.
+  // It flushes any remaining thread-local observations into the global histogram.
+  // Must be called at the end of each consumer thread before it exits.
+  observeLatency(-1.0);  // sentinel value triggers flush-only path
 }
 
 void JasmineGraphIncrementalLocalStore::observeLatency(double latency_ms) {
   static thread_local std::vector<uint64_t> local_counts(ingestHistogram.le.size() + 1, 0);
   static thread_local uint64_t local_count = 0;
   static thread_local double local_sum = 0.0;
+  static thread_local std::unordered_map<long long, uint64_t> local_exact_counts;
+
+  // Sentinel value (-1.0) means "flush remaining thread-local data and return"
+  bool flushOnly = (latency_ms < 0.0);
+  if (flushOnly) {
+    if (local_count > 0) {
+      std::lock_guard<std::mutex> guard(ingestHistogram.mtx);
+      for (size_t i = 0; i < local_counts.size(); ++i) {
+        ingestHistogram.counts[i] += local_counts[i];
+        local_counts[i] = 0;
+      }
+      for (const auto& [lat, cnt] : local_exact_counts) {
+        ingestHistogram.exact_counts[lat] += cnt;
+      }
+      local_exact_counts.clear();
+      ingestHistogram.count += local_count;
+      ingestHistogram.sum += local_sum;
+      ingestHistogram.observations_since_push.fetch_add(local_count);
+      local_count = 0;
+      local_sum = 0.0;
+    }
+    return;
+  }
 
   bool placed = false;
   for (size_t i = 0; i < ingestHistogram.le.size(); ++i) {
@@ -277,6 +339,10 @@ void JasmineGraphIncrementalLocalStore::observeLatency(double latency_ms) {
   if (!placed) {
     local_counts.back()++;  // +Inf bucket
   }
+  // Track exact latency (rounded to nearest ms) in thread-local map
+  long long lat_key = static_cast<long long>(std::round(latency_ms));
+  local_exact_counts[lat_key]++;
+
   local_count++;
   local_sum += latency_ms;
 
@@ -286,6 +352,11 @@ void JasmineGraphIncrementalLocalStore::observeLatency(double latency_ms) {
       ingestHistogram.counts[i] += local_counts[i];
       local_counts[i] = 0;
     }
+    // Merge thread-local exact counts into global map
+    for (const auto& [lat, cnt] : local_exact_counts) {
+      ingestHistogram.exact_counts[lat] += cnt;
+    }
+    local_exact_counts.clear();
     
     uint64_t previous_count = ingestHistogram.count;
     ingestHistogram.count += local_count;

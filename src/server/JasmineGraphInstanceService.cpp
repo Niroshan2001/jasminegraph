@@ -5103,6 +5103,30 @@ static void worker_direct_kafka_stream_command(
 
                 csvFile.close();
                 instance_logger.info("[HISTOGRAM] Wrote per-worker latency CSV: " + csvPath);
+
+                // Write per-worker exact latency CSV (individual latency values and their counts)
+                if (hj.contains("exact_counts") && hj["exact_counts"].is_object() && !hj["exact_counts"].empty()) {
+                    std::string exactCsvPath = folderLocation + "/latency_exact_graph_" +
+                                              std::to_string(cfg.graphId) + "_worker_" +
+                                              std::to_string(cfg.workerIndex) + ".csv";
+                    std::ofstream exactCsv(exactCsvPath, std::ios::out | std::ios::trunc);
+                    if (exactCsv.is_open()) {
+                        exactCsv << "latency_ms,count\n";
+                        // Collect entries and sort by latency
+                        std::vector<std::pair<long long, uint64_t>> sorted_exact;
+                        for (auto& [key, val] : hj["exact_counts"].items()) {
+                            sorted_exact.emplace_back(std::stoll(key), val.get<uint64_t>());
+                        }
+                        std::sort(sorted_exact.begin(), sorted_exact.end());
+                        for (const auto& [lat, cnt] : sorted_exact) {
+                            exactCsv << lat << "," << cnt << "\n";
+                        }
+                        exactCsv.close();
+                        instance_logger.info("[HISTOGRAM] Wrote per-worker exact latency CSV: " + exactCsvPath);
+                    } else {
+                        instance_logger.error("[HISTOGRAM] Failed to open exact latency CSV: " + exactCsvPath);
+                    }
+                }
             } else {
                 instance_logger.error("[HISTOGRAM] Failed to open CSV file: " + csvPath);
             }

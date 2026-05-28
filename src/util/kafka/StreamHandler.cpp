@@ -22,6 +22,7 @@ limitations under the License.
 #include <iomanip>
 #include <nlohmann/json.hpp>
 #include <string>
+#include <unordered_map>
 #include <sstream>
 #include <stdlib.h>
 #include <sys/socket.h>
@@ -1058,6 +1059,8 @@ void StreamHandler::consumerThreadFunc(int threadId,
         }  // end message batch loop
     }  // end while
 
+    // Flush remaining thread-local latency observations before thread exit
+    JasmineGraphIncrementalLocalStore::flushLocalLatency();
     streamHandlerLogger().info("Consumer thread " + std::to_string(threadId) +
                                " finished. Processed " + std::to_string(threadMessages) + " messages.");
 }
@@ -1539,6 +1542,8 @@ void StreamHandler::listenViaDirectWorkers(
             std::vector<uint64_t> mergedCounts;
             uint64_t mergedCount = 0;
             double mergedSum = 0.0;
+            // Merged exact latency counts across all workers
+            std::unordered_map<long long, uint64_t> mergedExactCounts;
 
             for (const auto& histStr : doneStats->histogramJsons) {
                 try {
@@ -1561,6 +1566,14 @@ void StreamHandler::listenViaDirectWorkers(
                         }
                         mergedCount += cnt;
                         mergedSum += s;
+                    }
+                    // Merge exact counts from this worker
+                    if (hj.contains("exact_counts") && hj["exact_counts"].is_object()) {
+                        for (auto& [key, val] : hj["exact_counts"].items()) {
+                            try {
+                                mergedExactCounts[std::stoll(key)] += val.get<uint64_t>();
+                            } catch (...) {}
+                        }
                     }
                 } catch (const std::exception& e) {
                     streamHandlerLogger().warn("[HISTOGRAM] Failed to parse worker histogram: " +
@@ -1648,6 +1661,26 @@ void StreamHandler::listenViaDirectWorkers(
 
                     csvFile.close();
                     streamHandlerLogger().info("[HISTOGRAM] Wrote consolidated latency CSV: " + csvPath);
+
+                    // Write consolidated exact latency CSV
+                    if (!mergedExactCounts.empty()) {
+                        std::string exactCsvPath = folderLocation + "/latency_exact_graph_" +
+                                                   std::to_string(graphId) + ".csv";
+                        std::ofstream exactCsv(exactCsvPath, std::ios::out | std::ios::trunc);
+                        if (exactCsv.is_open()) {
+                            exactCsv << "latency_ms,count\n";
+                            std::vector<std::pair<long long, uint64_t>> sorted_exact(
+                                mergedExactCounts.begin(), mergedExactCounts.end());
+                            std::sort(sorted_exact.begin(), sorted_exact.end());
+                            for (const auto& [lat, cnt] : sorted_exact) {
+                                exactCsv << lat << "," << cnt << "\n";
+                            }
+                            exactCsv.close();
+                            streamHandlerLogger().info("[HISTOGRAM] Wrote consolidated exact latency CSV: " + exactCsvPath);
+                        } else {
+                            streamHandlerLogger().error("[HISTOGRAM] Failed to open exact latency CSV: " + exactCsvPath);
+                        }
+                    }
                 } else {
                     streamHandlerLogger().error("[HISTOGRAM] Failed to open CSV file: " + csvPath);
                 }
