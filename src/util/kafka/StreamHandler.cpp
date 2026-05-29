@@ -1628,7 +1628,8 @@ void StreamHandler::listenViaDirectWorkers(
                 if (csvFile.is_open()) {
                     csvFile << std::fixed << std::setprecision(2);
                     csvFile << "metric,value\n";
-                    csvFile << "total_edges," << mergedCount << "\n";
+                    csvFile << "total_edges," << doneStats->totalMessages.load() << "\n";
+                    csvFile << "histogram_edges," << mergedCount << "\n";
                     csvFile << "sum_latency_ms," << mergedSum << "\n";
                     csvFile << "avg_latency_ms," << (mergedSum / mergedCount) << "\n";
 

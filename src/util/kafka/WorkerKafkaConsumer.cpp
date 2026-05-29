@@ -852,11 +852,13 @@ void WorkerKafkaConsumer::consumerThreadFunc(
     } catch (const std::exception& e) {
         workerKafkaLogger().error("[CRASH] consumerThreadFunc thread " + std::to_string(threadId) +
                                   " caught exception: " + e.what());
+        JasmineGraphIncrementalLocalStore::flushLocalLatency();
         closeConsumer();
         endSignalReceived = true;
     } catch (...) {
         workerKafkaLogger().error("[CRASH] consumerThreadFunc thread " + std::to_string(threadId) +
                                   " caught unknown exception");
+        JasmineGraphIncrementalLocalStore::flushLocalLatency();
         closeConsumer();
         endSignalReceived = true;
     }

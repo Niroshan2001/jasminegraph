@@ -5070,7 +5070,8 @@ static void worker_direct_kafka_stream_command(
             if (csvFile.is_open()) {
                 csvFile << std::fixed << std::setprecision(2);
                 csvFile << "metric,value\n";
-                csvFile << "total_edges," << totalCount << "\n";
+                csvFile << "total_edges," << stats.totalMessages << "\n";
+                csvFile << "histogram_edges," << totalCount << "\n";
                 csvFile << "sum_latency_ms," << totalSum << "\n";
                 csvFile << "avg_latency_ms," << (totalSum / totalCount) << "\n";
 
