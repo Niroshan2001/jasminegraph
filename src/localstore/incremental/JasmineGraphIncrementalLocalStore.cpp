@@ -267,7 +267,7 @@ void JasmineGraphIncrementalLocalStore::printAndSaveHistogram() {
           ingestHistogram.exact_counts.begin(), ingestHistogram.exact_counts.end());
       std::sort(sorted_counts.begin(), sorted_counts.end());
       for (const auto& entry : sorted_counts) {
-        exactCsv << entry.first << "," << entry.second << "\n";
+        exactCsv << std::fixed << std::setprecision(3) << (entry.first / 1000.0) << "," << entry.second << "\n";
       }
       exactCsv.close();
       incremental_localstore_logger.info("Wrote exact latency CSV: " + exactCsvPath);
@@ -339,9 +339,9 @@ void JasmineGraphIncrementalLocalStore::observeLatency(double latency_ms) {
   if (!placed) {
     local_counts.back()++;  // +Inf bucket
   }
-  // Track exact latency (rounded to nearest ms) in thread-local map
-  long long lat_key = static_cast<long long>(std::round(latency_ms));
-  local_exact_counts[lat_key]++;
+  // Track exact latency in microseconds to avoid floating point hash issues
+  long long lat_key_us = static_cast<long long>(std::round(latency_ms * 1000.0));
+  local_exact_counts[lat_key_us]++;
 
   local_count++;
   local_sum += latency_ms;
@@ -520,22 +520,22 @@ void JasmineGraphIncrementalLocalStore::addEdgeFromJson(const json& edgeJson) {
                                         ") Added successfully!");
     // If the edge JSON included ingest metadata, compute latency and push metric
     try {
-      if (edgeJson.contains("properties") && edgeJson["properties"].contains("__ingest_ts_ms")) {
+      if (edgeJson.contains("properties") && edgeJson["properties"].contains("__ingest_ts_us")) {
         long long ingest_ts = 0;
         try {
-          ingest_ts = edgeJson["properties"]["__ingest_ts_ms"].get<long long>();
+          ingest_ts = edgeJson["properties"]["__ingest_ts_us"].get<long long>();
         } catch (...) {
           // fallback if stored as string
           try {
-            ingest_ts = std::stoll(edgeJson["properties"]["__ingest_ts_ms"].get<std::string>());
+            ingest_ts = std::stoll(edgeJson["properties"]["__ingest_ts_us"].get<std::string>());
           } catch (...) { ingest_ts = 0; }
         }
         if (ingest_ts > 0) {
-          long long now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+          long long now_us = std::chrono::duration_cast<std::chrono::microseconds>(
               std::chrono::system_clock::now().time_since_epoch()).count();
-          long long latency_ms = now_ms - ingest_ts;
+          double latency_ms = static_cast<double>(now_us - ingest_ts) / 1000.0;
 
-          JasmineGraphIncrementalLocalStore::observeLatency(static_cast<double>(latency_ms));
+          JasmineGraphIncrementalLocalStore::observeLatency(latency_ms);
         }
       }
     } catch (...) {

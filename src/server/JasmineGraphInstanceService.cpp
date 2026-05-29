@@ -5068,7 +5068,7 @@ static void worker_direct_kafka_stream_command(
                                   std::to_string(cfg.workerIndex) + ".csv";
             std::ofstream csvFile(csvPath, std::ios::out | std::ios::trunc);
             if (csvFile.is_open()) {
-                csvFile << std::fixed << std::setprecision(2);
+                csvFile << std::fixed << std::setprecision(3);
                 csvFile << "metric,value\n";
                 csvFile << "total_edges," << stats.totalMessages << "\n";
                 csvFile << "histogram_edges," << totalCount << "\n";
@@ -5119,8 +5119,8 @@ static void worker_direct_kafka_stream_command(
                             sorted_exact.emplace_back(std::stoll(key), val.get<uint64_t>());
                         }
                         std::sort(sorted_exact.begin(), sorted_exact.end());
-                        for (const auto& [lat, cnt] : sorted_exact) {
-                            exactCsv << lat << "," << cnt << "\n";
+                        for (const auto& [lat_us, cnt] : sorted_exact) {
+                            exactCsv << std::fixed << std::setprecision(3) << (lat_us / 1000.0) << "," << cnt << "\n";
                         }
                         exactCsv.close();
                         instance_logger.info("[HISTOGRAM] Wrote per-worker exact latency CSV: " + exactCsvPath);

@@ -88,7 +88,7 @@ bool parseCsvEdgePayload(const std::string& payload, std::string& sourceId, std:
 
 bool normalizeKafkaPayloadToEdgeJson(const std::string& payload, bool csvInputMode,
                                      json& edgeJson, std::string& error) {
-    long long now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+    long long now_us = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
 
     if (!csvInputMode) {
@@ -97,8 +97,8 @@ bool normalizeKafkaPayloadToEdgeJson(const std::string& payload, bool csvInputMo
             if (!edgeJson.contains("properties")) {
                 edgeJson["properties"] = json::object();
             }
-            if (!edgeJson["properties"].contains("__ingest_ts_ms")) {
-                edgeJson["properties"]["__ingest_ts_ms"] = std::to_string(now_ms);
+            if (!edgeJson["properties"].contains("__ingest_ts_us")) {
+                edgeJson["properties"]["__ingest_ts_us"] = std::to_string(now_us);
             }
             return true;
         } catch (const std::exception& e) {
@@ -114,8 +114,8 @@ bool normalizeKafkaPayloadToEdgeJson(const std::string& payload, bool csvInputMo
             if (!edgeJson.contains("properties")) {
                 edgeJson["properties"] = json::object();
             }
-            if (!edgeJson["properties"].contains("__ingest_ts_ms")) {
-                edgeJson["properties"]["__ingest_ts_ms"] = std::to_string(now_ms);
+            if (!edgeJson["properties"].contains("__ingest_ts_us")) {
+                edgeJson["properties"]["__ingest_ts_us"] = std::to_string(now_us);
             }
             return true;
         } catch (const std::exception& e) {
@@ -133,7 +133,7 @@ bool normalizeKafkaPayloadToEdgeJson(const std::string& payload, bool csvInputMo
     edgeJson = {
         {"source", {{"id", sourceId}, {"properties", {{"name", "Node_" + sourceId}}}}},
         {"destination", {{"id", targetId}, {"properties", {{"name", "Node_" + targetId}}}}},
-        {"properties", {{"publication", "1"}, {"title", "CSV"}, {"graphId", "1"}, {"__ingest_ts_ms", std::to_string(now_ms)}}}
+        {"properties", {{"publication", "1"}, {"title", "CSV"}, {"graphId", "1"}, {"__ingest_ts_us", std::to_string(now_us)}}}
     };
     return true;
 }
@@ -810,19 +810,19 @@ void WorkerKafkaConsumer::consumerThreadFunc(
             // that normalizeKafkaPayloadToEdgeJson() already injected.
             if (temporalOnlyMode_) {
                 try {
-                    if (prop.contains("__ingest_ts_ms")) {
+                    if (prop.contains("__ingest_ts_us")) {
                         long long ingest_ts = 0;
                         try {
-                            ingest_ts = prop["__ingest_ts_ms"].get<long long>();
+                            ingest_ts = prop["__ingest_ts_us"].get<long long>();
                         } catch (...) {
                             try {
-                                ingest_ts = std::stoll(prop["__ingest_ts_ms"].get<std::string>());
+                                ingest_ts = std::stoll(prop["__ingest_ts_us"].get<std::string>());
                             } catch (...) { ingest_ts = 0; }
                         }
                         if (ingest_ts > 0) {
-                            long long now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            long long now_us = std::chrono::duration_cast<std::chrono::microseconds>(
                                 std::chrono::system_clock::now().time_since_epoch()).count();
-                            double latency_ms = static_cast<double>(now_ms - ingest_ts);
+                            double latency_ms = static_cast<double>(now_us - ingest_ts) / 1000.0;
                             JasmineGraphIncrementalLocalStore::observeLatency(latency_ms);
                         }
                     }

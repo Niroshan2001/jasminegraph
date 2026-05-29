@@ -1626,7 +1626,7 @@ void StreamHandler::listenViaDirectWorkers(
                                       std::to_string(graphId) + ".csv";
                 std::ofstream csvFile(csvPath, std::ios::out | std::ios::trunc);
                 if (csvFile.is_open()) {
-                    csvFile << std::fixed << std::setprecision(2);
+                    csvFile << std::fixed << std::setprecision(3);
                     csvFile << "metric,value\n";
                     csvFile << "total_edges," << doneStats->totalMessages.load() << "\n";
                     csvFile << "histogram_edges," << mergedCount << "\n";
@@ -1673,8 +1673,8 @@ void StreamHandler::listenViaDirectWorkers(
                             std::vector<std::pair<long long, uint64_t>> sorted_exact(
                                 mergedExactCounts.begin(), mergedExactCounts.end());
                             std::sort(sorted_exact.begin(), sorted_exact.end());
-                            for (const auto& [lat, cnt] : sorted_exact) {
-                                exactCsv << lat << "," << cnt << "\n";
+                            for (const auto& [lat_us, cnt] : sorted_exact) {
+                                exactCsv << std::fixed << std::setprecision(3) << (lat_us / 1000.0) << "," << cnt << "\n";
                             }
                             exactCsv.close();
                             streamHandlerLogger().info("[HISTOGRAM] Wrote consolidated exact latency CSV: " + exactCsvPath);
