@@ -5035,26 +5035,7 @@ static void worker_direct_kafka_stream_command(
                 cumulative[i] = running;
             }
 
-            // Percentile via linear interpolation within histogram buckets
-            auto computePercentile = [&](double p) -> double {
-                double rank = (p / 100.0) * totalCount;
-                if (rank <= 0) return 0.0;
-                double prevBound = 0.0;
-                uint64_t prevCum = 0;
-                for (size_t i = 0; i < cumulative.size(); ++i) {
-                    double upperBound = (i < le.size()) ? le[i]
-                        : (le.empty() ? 10000 : le.back() * 2);
-                    if (cumulative[i] >= static_cast<uint64_t>(std::ceil(rank))) {
-                        uint64_t bucketCount = counts[i];
-                        if (bucketCount == 0) return upperBound;
-                        double fraction = (rank - prevCum) / static_cast<double>(bucketCount);
-                        return prevBound + fraction * (upperBound - prevBound);
-                    }
-                    prevBound = upperBound;
-                    prevCum = cumulative[i];
-                }
-                return le.empty() ? 0.0 : le.back();
-            };
+
 
             std::string folderLocation = Utils::getJasmineGraphProperty(
                 "org.jasminegraph.server.instance.datafolder");
@@ -5075,13 +5056,7 @@ static void worker_direct_kafka_stream_command(
                 csvFile << "sum_latency_ms," << totalSum << "\n";
                 csvFile << "avg_latency_ms," << (totalSum / totalCount) << "\n";
 
-                // All integer percentiles p1 through p99
-                for (int p = 1; p <= 99; ++p) {
-                    csvFile << "p" << p << "_latency_ms," << computePercentile(p) << "\n";
-                }
-                // Fine-grained tail percentiles
-                csvFile << "p99.9_latency_ms," << computePercentile(99.9) << "\n";
-                csvFile << "p99.99_latency_ms," << computePercentile(99.99) << "\n";
+
 
                 // Raw bucket counts for histogram plotting
                 for (size_t i = 0; i < counts.size(); ++i) {

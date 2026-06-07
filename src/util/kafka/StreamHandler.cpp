@@ -1590,29 +1590,7 @@ void StreamHandler::listenViaDirectWorkers(
                     cumulative[i] = running;
                 }
 
-                // Percentile computation via linear interpolation within histogram buckets.
-                // For a given percentile p (0-100), find the bucket where the cumulative
-                // count first exceeds (p/100 * totalCount), then interpolate within that bucket.
-                auto computePercentile = [&](double p) -> double {
-                    double rank = (p / 100.0) * mergedCount;
-                    if (rank <= 0) return 0.0;
-                    // Find the bucket where cumulative >= rank
-                    double prevBound = 0.0;
-                    uint64_t prevCum = 0;
-                    for (size_t i = 0; i < cumulative.size(); ++i) {
-                        double upperBound = (i < mergedLe.size()) ? mergedLe[i] : (mergedLe.empty() ? 10000 : mergedLe.back() * 2);
-                        if (cumulative[i] >= static_cast<uint64_t>(std::ceil(rank))) {
-                            // Linear interpolation within this bucket
-                            uint64_t bucketCount = mergedCounts[i];
-                            if (bucketCount == 0) return upperBound;
-                            double fraction = (rank - prevCum) / static_cast<double>(bucketCount);
-                            return prevBound + fraction * (upperBound - prevBound);
-                        }
-                        prevBound = upperBound;
-                        prevCum = cumulative[i];
-                    }
-                    return mergedLe.empty() ? 0.0 : mergedLe.back();
-                };
+
 
                 // Write CSV
                 std::string folderLocation = Utils::getJasmineGraphProperty(
@@ -1633,13 +1611,7 @@ void StreamHandler::listenViaDirectWorkers(
                     csvFile << "sum_latency_ms," << mergedSum << "\n";
                     csvFile << "avg_latency_ms," << (mergedSum / mergedCount) << "\n";
 
-                    // All integer percentiles p1 through p99
-                    for (int p = 1; p <= 99; ++p) {
-                        csvFile << "p" << p << "_latency_ms," << computePercentile(p) << "\n";
-                    }
-                    // Fine-grained tail percentiles
-                    csvFile << "p99.9_latency_ms," << computePercentile(99.9) << "\n";
-                    csvFile << "p99.99_latency_ms," << computePercentile(99.99) << "\n";
+
 
                     // Raw bucket counts (non-cumulative) for histogram plotting
                     for (size_t i = 0; i < mergedCounts.size(); ++i) {
