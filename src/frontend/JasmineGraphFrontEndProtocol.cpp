@@ -64,6 +64,7 @@ const string COMMAND = "command";
 const string PRIORITY = "priority(>=1)";
 const string INVALID_FORMAT = "Invalid message format";
 const string CYPHER = "cypher";
+const string TMP_CYPHER = "tmpcp";
 const string SEMANTIC_BEAM_SEARCH = "sbs";
 const string PROPERTIES = "prp";
 const string UPDATE_PARTITION_META = "update-partition-meta";

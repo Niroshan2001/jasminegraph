@@ -44,8 +44,6 @@ limitations under the License.
 struct KGConstructionRate;
 class JasmineGraphHashMapCentralStore;
 
-void *frontendservicesesion(std::string masterIP, int connFd, SQLiteDBInterface *sqlite,
-                            PerformanceSQLiteDBInterface *perfSqlite, JobScheduler *jobScheduler);
 
 class JasmineGraphFrontEnd {
  public:

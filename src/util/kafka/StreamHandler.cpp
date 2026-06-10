@@ -979,49 +979,52 @@ void StreamHandler::consumerThreadFunc(int threadId,
 
             // ---- 4. BATCH PUBLISH (workerBatchMutexes already per-worker) ----
             auto publish_start = std::chrono::high_resolution_clock::now();
-            if (part_s == part_d) {
-                // Local edge — only one dump() needed
-                obj["EdgeType"] = "Local";
-                obj["PID"] = part_s;
-                std::string localEdgeData = obj.dump();
+            // In temporal mode, skip native incremental-store updates.
+            if (localTemporalStores.empty()) {
+                if (part_s == part_d) {
+                    // Local edge — only one dump() needed
+                    obj["EdgeType"] = "Local";
+                    obj["PID"] = part_s;
+                    std::string localEdgeData = obj.dump();
 
-                {
-                    std::unique_lock<std::mutex> lock(*workerBatchMutexes[temp_s]);
-                    workerBatches[temp_s].push_back(localEdgeData);
-                    size_t batchSize = workerBatches[temp_s].size();
-                    lock.unlock();
-                    if (batchSize >= BATCH_SIZE) flushWorkerBatch(temp_s, false);
-                }
-            } else {
-                // Central edge — serialize once, patch PID in the string for dst worker
-                obj["EdgeType"] = "Central";
-                obj["PID"] = part_s;
-                std::string centralEdgeData_s = obj.dump();
+                    {
+                        std::unique_lock<std::mutex> lock(*workerBatchMutexes[temp_s]);
+                        workerBatches[temp_s].push_back(localEdgeData);
+                        size_t batchSize = workerBatches[temp_s].size();
+                        lock.unlock();
+                        if (batchSize >= BATCH_SIZE) flushWorkerBatch(temp_s, false);
+                    }
+                } else {
+                    // Central edge — serialize once, patch PID in the string for dst worker
+                    obj["EdgeType"] = "Central";
+                    obj["PID"] = part_s;
+                    std::string centralEdgeData_s = obj.dump();
 
-                // Build dst variant by replacing "PID":part_s with "PID":part_d
-                // (nlohmann dumps without spaces, e.g. "PID":3)
-                std::string centralEdgeData_d = centralEdgeData_s;
-                {
-                    std::string pidOld = "\"PID\":" + std::to_string(part_s);
-                    std::string pidNew = "\"PID\":" + std::to_string(part_d);
-                    auto pos = centralEdgeData_d.find(pidOld);
-                    if (pos != std::string::npos)
-                        centralEdgeData_d.replace(pos, pidOld.size(), pidNew);
-                }
+                    // Build dst variant by replacing "PID":part_s with "PID":part_d
+                    // (nlohmann dumps without spaces, e.g. "PID":3)
+                    std::string centralEdgeData_d = centralEdgeData_s;
+                    {
+                        std::string pidOld = "\"PID\":" + std::to_string(part_s);
+                        std::string pidNew = "\"PID\":" + std::to_string(part_d);
+                        auto pos = centralEdgeData_d.find(pidOld);
+                        if (pos != std::string::npos)
+                            centralEdgeData_d.replace(pos, pidOld.size(), pidNew);
+                    }
 
-                {
-                    std::unique_lock<std::mutex> lock(*workerBatchMutexes[temp_s]);
-                    workerBatches[temp_s].push_back(centralEdgeData_s);
-                    size_t batchSize = workerBatches[temp_s].size();
-                    lock.unlock();
-                    if (batchSize >= BATCH_SIZE) flushWorkerBatch(temp_s, false);
-                }
-                {
-                    std::unique_lock<std::mutex> lock(*workerBatchMutexes[temp_d]);
-                    workerBatches[temp_d].push_back(centralEdgeData_d);
-                    size_t batchSize = workerBatches[temp_d].size();
-                    lock.unlock();
-                    if (batchSize >= BATCH_SIZE) flushWorkerBatch(temp_d, false);
+                    {
+                        std::unique_lock<std::mutex> lock(*workerBatchMutexes[temp_s]);
+                        workerBatches[temp_s].push_back(centralEdgeData_s);
+                        size_t batchSize = workerBatches[temp_s].size();
+                        lock.unlock();
+                        if (batchSize >= BATCH_SIZE) flushWorkerBatch(temp_s, false);
+                    }
+                    {
+                        std::unique_lock<std::mutex> lock(*workerBatchMutexes[temp_d]);
+                        workerBatches[temp_d].push_back(centralEdgeData_d);
+                        size_t batchSize = workerBatches[temp_d].size();
+                        lock.unlock();
+                        if (batchSize >= BATCH_SIZE) flushWorkerBatch(temp_d, false);
+                    }
                 }
             }
             total_publish_time += std::chrono::duration_cast<std::chrono::microseconds>(

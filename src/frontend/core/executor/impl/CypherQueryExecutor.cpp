@@ -11,6 +11,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
  */
 #include <fstream>
+#include <unistd.h>
+#include <regex>
+#include <set>
+#include <algorithm>
 
 #include "CypherQueryExecutor.h"
 #include "antlr4-runtime.h"
@@ -21,12 +25,367 @@ limitations under the License.
 #include "../../../../../src/query/processor/cypher/runtime/AggregationFactory.h"
 #include "../../../../../src/query/processor/cypher/runtime/Aggregation.h"
 #include "../../../../../src/server/JasmineGraphServer.h"
+#include "../../../../../src/temporalstore/TemporalStore.h"
 #include "../../../../util/telemetry/OpenTelemetryUtil.h"
 
 #include "/home/ubuntu/software/antlr/CypherLexer.h"
 #include "/home/ubuntu/software/antlr/CypherParser.h"
 
 Logger cypher_logger;
+
+namespace {
+
+enum class TemporalCountTarget {
+    EDGE,
+    SOURCE,
+    DESTINATION,
+    UNKNOWN
+};
+
+struct TemporalQueryPlan {
+    std::string sourceAlias = "source";
+    std::string destinationAlias = "destination";
+    bool isCountQuery = false;
+    bool countDistinct = false;
+    TemporalCountTarget countTarget = TemporalCountTarget::EDGE;
+};
+
+std::string toLowerCopy(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return value;
+}
+
+void parseTemporalMatchAliases(const std::string& queryString,
+                               std::string& sourceAlias,
+                               std::string& destinationAlias) {
+    const std::regex directedPattern(
+        R"(\bMATCH\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*-\s*(?:\[[^\]]*\]\s*)?-\s*>\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\))",
+        std::regex_constants::icase);
+    std::smatch directedMatch;
+    if (std::regex_search(queryString, directedMatch, directedPattern)) {
+        sourceAlias = directedMatch[1].str();
+        destinationAlias = directedMatch[2].str();
+        return;
+    }
+
+    const std::regex undirectedPattern(
+        R"(\bMATCH\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*-\s*(?:\[[^\]]*\]\s*)?-\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\))",
+        std::regex_constants::icase);
+    std::smatch undirectedMatch;
+    if (std::regex_search(queryString, undirectedMatch, undirectedPattern)) {
+        sourceAlias = undirectedMatch[1].str();
+        destinationAlias = undirectedMatch[2].str();
+    }
+}
+
+bool buildTemporalQueryPlan(const std::string& queryString,
+                            TemporalQueryPlan& plan,
+                            std::string& errorMessage) {
+    const std::regex matchRegex(R"(\bMATCH\b)", std::regex_constants::icase);
+    if (!std::regex_search(queryString, matchRegex)) {
+        errorMessage = "tmpcp currently supports MATCH queries and optional RETURN count(...)";
+        return false;
+    }
+
+    parseTemporalMatchAliases(queryString, plan.sourceAlias, plan.destinationAlias);
+
+    const std::regex countRegex(
+        R"(\bRETURN\s+count\s*\(\s*(distinct\s+)?([A-Za-z_][A-Za-z0-9_]*|\*)\s*\))",
+        std::regex_constants::icase);
+    std::smatch countMatch;
+    if (!std::regex_search(queryString, countMatch, countRegex)) {
+        return true;
+    }
+
+    plan.isCountQuery = true;
+    plan.countDistinct = !countMatch[1].str().empty();
+
+    std::string target = toLowerCopy(countMatch[2].str());
+    if (target == "*") {
+        plan.countTarget = TemporalCountTarget::EDGE;
+        return true;
+    }
+
+    std::string sourceAliasLower = toLowerCopy(plan.sourceAlias);
+    std::string destinationAliasLower = toLowerCopy(plan.destinationAlias);
+
+    if (target == sourceAliasLower) {
+        plan.countTarget = TemporalCountTarget::SOURCE;
+        return true;
+    }
+    if (target == destinationAliasLower) {
+        plan.countTarget = TemporalCountTarget::DESTINATION;
+        return true;
+    }
+
+    if (plan.countDistinct) {
+        errorMessage = "Unsupported tmpcp DISTINCT count target: " + countMatch[2].str() +
+                       ". Use DISTINCT on MATCH node aliases only.";
+        return false;
+    }
+
+    // COUNT(alias) without DISTINCT still maps to row cardinality.
+    plan.countTarget = TemporalCountTarget::UNKNOWN;
+    return true;
+}
+
+uint64_t evaluateTemporalCount(const TemporalQueryPlan& plan,
+                               const std::vector<std::pair<std::string, std::string>>& edges) {
+    if (!plan.isCountQuery) {
+        return 0;
+    }
+
+    if (!plan.countDistinct) {
+        return static_cast<uint64_t>(edges.size());
+    }
+
+    if (plan.countTarget == TemporalCountTarget::EDGE || plan.countTarget == TemporalCountTarget::UNKNOWN) {
+        return static_cast<uint64_t>(edges.size());
+    }
+
+    std::set<std::string> distinctNodes;
+    if (plan.countTarget == TemporalCountTarget::SOURCE) {
+        for (const auto& edge : edges) {
+            distinctNodes.insert(edge.first);
+        }
+    } else if (plan.countTarget == TemporalCountTarget::DESTINATION) {
+        for (const auto& edge : edges) {
+            distinctNodes.insert(edge.second);
+        }
+    }
+    return static_cast<uint64_t>(distinctNodes.size());
+}
+
+bool writeLineToSocket(int connFd, const std::string& line) {
+    ssize_t result = write(connFd, line.c_str(), line.length());
+    if (result < 0) {
+        return false;
+    }
+    result = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                   Conts::CARRIAGE_RETURN_NEW_LINE.size());
+    return result >= 0;
+}
+
+bool writeTemporalQueryRows(int connFd,
+                            const TemporalQueryPlan& plan,
+                            const std::vector<std::pair<std::string, std::string>>& edges,
+                            const std::string& snapshotFieldName,
+                            const json& snapshotFieldValue,
+                            std::string& errorMessage) {
+    if (plan.isCountQuery) {
+        json row;
+        row["count"] = evaluateTemporalCount(plan, edges);
+        row[snapshotFieldName] = snapshotFieldValue;
+        if (!writeLineToSocket(connFd, row.dump())) {
+            errorMessage = "Error writing temporal count result to socket";
+            return false;
+        }
+        return true;
+    }
+
+    for (const auto& edge : edges) {
+        json row;
+        row["source"] = edge.first;
+        row["destination"] = edge.second;
+        row[plan.sourceAlias] = edge.first;
+        row[plan.destinationAlias] = edge.second;
+        row[snapshotFieldName] = snapshotFieldValue;
+        if (!writeLineToSocket(connFd, row.dump())) {
+            errorMessage = "Error writing temporal match rows to socket";
+            return false;
+        }
+    }
+
+    return true;
+}
+
+
+std::string getTemporalSnapshotDirForCypher() {
+    std::string configuredPath =
+        Utils::getJasmineGraphProperty("org.jasminegraph.server.instance.temporalsnapshotfolder");
+    if (!configuredPath.empty()) {
+        return configuredPath;
+    }
+
+    return Utils::getJasmineGraphProperty("org.jasminegraph.server.instance.datafolder") +
+           "/temporal_snapshots";
+}
+
+bool tryParseTemporalSnapshotClause(const std::string& queryString, uint32_t& snapshotId) {
+    const std::regex snapshotRegex(R"(\bAT\s+SNAPSHOT\s+(\d+)\b)",
+                                   std::regex_constants::icase);
+    std::smatch match;
+    if (!std::regex_search(queryString, match, snapshotRegex)) {
+        return false;
+    }
+
+    try {
+        snapshotId = static_cast<uint32_t>(std::stoul(match[1].str()));
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool tryParseTemporalRangeClause(const std::string& queryString,
+                                 uint32_t& startSnapshot,
+                                 uint32_t& endSnapshot) {
+    const std::regex rangeRegex(R"(\bFROM\s+(\d+)\s+TO\s+(\d+)\b)",
+                                std::regex_constants::icase);
+    std::smatch match;
+    if (!std::regex_search(queryString, match, rangeRegex)) {
+        return false;
+    }
+
+    try {
+        startSnapshot = static_cast<uint32_t>(std::stoul(match[1].str()));
+        endSnapshot = static_cast<uint32_t>(std::stoul(match[2].str()));
+        return startSnapshot <= endSnapshot;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool loadBitmapFilesForGraphAtSnapshot(int graphId,
+                                       uint32_t snapshotId,
+                                       std::vector<std::pair<std::string, std::string>>& edges,
+                                       size_t& partitionsLoaded,
+                                       std::string& errorMessage) {
+    std::string snapshotDir = getTemporalSnapshotDirForCypher();
+    std::vector<std::string> files = Utils::getListOfFilesInDirectory(snapshotDir);
+    std::regex filePattern("^graph" + std::to_string(graphId) +
+                           "_part([0-9]+)_bitmaps\\\\.ebm$");
+
+    std::set<std::pair<std::string, std::string>> uniqueEdges;
+    partitionsLoaded = 0;
+
+    uint64_t timeThreshold = 60;
+    uint64_t edgeThreshold = 10000;
+
+    for (const auto& file : files) {
+        std::smatch match;
+        if (!std::regex_match(file, match, filePattern)) {
+            continue;
+        }
+
+        uint32_t partitionId;
+        try {
+            partitionId = static_cast<uint32_t>(std::stoul(match[1].str()));
+        } catch (...) {
+            continue;
+        }
+
+        TemporalStore store(graphId, partitionId, timeThreshold, edgeThreshold,
+                            SnapshotManager::SnapshotMode::HYBRID);
+        std::string filePath = snapshotDir + "/" + file;
+        if (!store.loadBitmapIndexFromDisk(filePath)) {
+            continue;
+        }
+
+        partitionsLoaded++;
+        auto partitionEdges = store.getEdgesAtSnapshot(snapshotId);
+        for (const auto& edge : partitionEdges) {
+            uniqueEdges.insert({edge.sourceId, edge.destId});
+        }
+    }
+
+    if (partitionsLoaded == 0) {
+        errorMessage = "No bitmap index files found for graph " + std::to_string(graphId);
+        return false;
+    }
+
+    edges.assign(uniqueEdges.begin(), uniqueEdges.end());
+    return true;
+}
+
+bool executeTemporalSnapshotCypher(int connFd,
+                                   int graphId,
+                                   uint32_t snapshotId,
+                                   const std::string& queryString,
+                                   std::string& errorMessage) {
+    std::vector<std::pair<std::string, std::string>> edges;
+    size_t partitionsLoaded = 0;
+    if (!loadBitmapFilesForGraphAtSnapshot(graphId, snapshotId, edges, partitionsLoaded, errorMessage)) {
+        return false;
+    }
+
+    TemporalQueryPlan plan;
+    if (!buildTemporalQueryPlan(queryString, plan, errorMessage)) {
+        return false;
+    }
+
+    json summary;
+    summary["type"] = "temporal_snapshot";
+    summary["graphId"] = graphId;
+    summary["snapshotId"] = snapshotId;
+    summary["partitionsLoaded"] = partitionsLoaded;
+    summary["edgeCount"] = edges.size();
+    summary["queryType"] = plan.isCountQuery ? "count" : "match";
+
+    if (!writeLineToSocket(connFd, summary.dump())) {
+        errorMessage = "Error writing temporal snapshot summary to socket";
+        return false;
+    }
+
+    return writeTemporalQueryRows(connFd, plan, edges, "snapshotId", snapshotId, errorMessage);
+}
+
+bool executeTemporalRangeCypher(int connFd,
+                                int graphId,
+                                uint32_t startSnapshot,
+                                uint32_t endSnapshot,
+                                const std::string& queryString,
+                                std::string& errorMessage) {
+    std::set<std::pair<std::string, std::string>> allUniqueEdges;
+    size_t snapshotsLoaded = 0;
+
+    for (uint32_t snapshotId = startSnapshot; snapshotId <= endSnapshot; ++snapshotId) {
+        std::vector<std::pair<std::string, std::string>> edges;
+        size_t partitionsLoaded = 0;
+        std::string snapshotError;
+        if (!loadBitmapFilesForGraphAtSnapshot(graphId, snapshotId, edges, partitionsLoaded, snapshotError)) {
+            continue;
+        }
+
+        snapshotsLoaded++;
+        for (const auto& edge : edges) {
+            allUniqueEdges.insert(edge);
+        }
+    }
+
+    if (snapshotsLoaded == 0) {
+        errorMessage = "No temporal bitmap snapshots loaded for graph " + std::to_string(graphId);
+        return false;
+    }
+
+    std::vector<std::pair<std::string, std::string>> edges(allUniqueEdges.begin(), allUniqueEdges.end());
+
+    TemporalQueryPlan plan;
+    if (!buildTemporalQueryPlan(queryString, plan, errorMessage)) {
+        return false;
+    }
+
+    json summary;
+    summary["type"] = "temporal_range";
+    summary["graphId"] = graphId;
+    summary["startSnapshot"] = startSnapshot;
+    summary["endSnapshot"] = endSnapshot;
+    summary["snapshotsLoaded"] = snapshotsLoaded;
+    summary["edgeCount"] = edges.size();
+    summary["queryType"] = plan.isCountQuery ? "count" : "match";
+
+    if (!writeLineToSocket(connFd, summary.dump())) {
+        errorMessage = "Error writing temporal range summary to socket";
+        return false;
+    }
+
+    json snapshotRange = {startSnapshot, endSnapshot};
+    return writeTemporalQueryRows(connFd, plan, edges, "snapshotRange", snapshotRange, errorMessage);
+}
+
+}  // namespace
 
 inline const json* getNestedValuePtr(const json& obj, const std::string& dottedKey) {
     // Direct lookup first
@@ -88,6 +447,102 @@ void CypherQueryExecutor::execute() {
 
     bool canCalibrate = Utils::parseBoolean(canCalibrateString);
     bool autoCalibrate = Utils::parseBoolean(autoCalibrateString);
+    std::string commandType = request.getJobType();
+    bool isTemporalCypherCommand = (commandType == TMP_CYPHER);
+
+    auto begin = chrono::high_resolution_clock::now();
+
+    auto finalizeExecution = [&](long long msDuration) {
+        workerResponded = true;
+        JobResponse jobResponse;
+        jobResponse.setJobId(request.getJobId());
+        responseVector.push_back(jobResponse);
+
+        responseVectorMutex.lock();
+        responseMap[request.getJobId()] = jobResponse;
+        responseVectorMutex.unlock();
+
+        if (canCalibrate || autoCalibrate) {
+            Utils::updateSLAInformation(perfDB, graphId, numberOfPartitions, msDuration, CYPHER,
+                                        Conts::SLA_CATEGORY::LATENCY);
+            isStatCollect = false;
+        }
+
+        processStatusMutex.lock();
+        for (auto processCompleteIterator = processData.begin(); processCompleteIterator != processData.end();
+             ++processCompleteIterator) {
+            ProcessInfo processInformation = *processCompleteIterator;
+            if (processInformation.id == uniqueId) {
+                processData.erase(processInformation);
+                break;
+            }
+        }
+        processStatusMutex.unlock();
+    };
+
+    uint32_t snapshotId = 0;
+    uint32_t startSnapshot = 0;
+    uint32_t endSnapshot = 0;
+    int graphIdInt = 0;
+    try {
+        graphIdInt = std::stoi(graphId);
+    } catch (...) {
+        graphIdInt = 0;
+    }
+
+    if (isTemporalCypherCommand && graphIdInt > 0 && tryParseTemporalSnapshotClause(queryString, snapshotId)) {
+        std::string temporalError;
+        bool temporalSuccess = executeTemporalSnapshotCypher(connFd, graphIdInt, snapshotId, queryString,
+                                     temporalError);
+        if (!temporalSuccess) {
+            writeLineToSocket(connFd, "{\"error\":\"" + temporalError + "\"}");
+            cypher_logger.error("Temporal Cypher snapshot query failed: " + temporalError);
+        } else {
+            cypher_logger.info("Temporal Cypher snapshot query completed for graph " + graphId +
+                               " snapshot " + std::to_string(snapshotId));
+        }
+
+        auto end = chrono::high_resolution_clock::now();
+        auto dur = end - begin;
+        auto msDuration = std::chrono::duration_cast<std::chrono::milliseconds>(dur).count();
+        finalizeExecution(msDuration);
+        return;
+    }
+
+    if (isTemporalCypherCommand && graphIdInt > 0 &&
+        tryParseTemporalRangeClause(queryString, startSnapshot, endSnapshot)) {
+        std::string temporalError;
+        bool temporalSuccess = executeTemporalRangeCypher(connFd, graphIdInt, startSnapshot, endSnapshot,
+                                  queryString,
+                                                          temporalError);
+        if (!temporalSuccess) {
+            writeLineToSocket(connFd, "{\"error\":\"" + temporalError + "\"}");
+            cypher_logger.error("Temporal Cypher range query failed: " + temporalError);
+        } else {
+            cypher_logger.info("Temporal Cypher range query completed for graph " + graphId +
+                               " range [" + std::to_string(startSnapshot) + ", " +
+                               std::to_string(endSnapshot) + "]");
+        }
+
+        auto end = chrono::high_resolution_clock::now();
+        auto dur = end - begin;
+        auto msDuration = std::chrono::duration_cast<std::chrono::milliseconds>(dur).count();
+        finalizeExecution(msDuration);
+        return;
+    }
+
+    if (isTemporalCypherCommand) {
+        std::string errorMessage =
+            "tmpcp queries must include 'AT SNAPSHOT <id>' or 'FROM <start> TO <end>'";
+        writeLineToSocket(connFd, "{\"error\":\"" + errorMessage + "\"}");
+        cypher_logger.error("Temporal Cypher query rejected: missing temporal clause");
+
+        auto end = chrono::high_resolution_clock::now();
+        auto dur = end - begin;
+        auto msDuration = std::chrono::duration_cast<std::chrono::milliseconds>(dur).count();
+        finalizeExecution(msDuration);
+        return;
+    }
 
     // Add query attributes for tracing
     OpenTelemetryUtil::addSpanAttribute("graph.id", graphId);
@@ -127,8 +582,6 @@ void CypherQueryExecutor::execute() {
 
     std::vector<std::future<void>> intermRes;
     std::vector<std::future<int>> statResponse;
-
-    auto begin = chrono::high_resolution_clock::now();
 
     // Capture the master trace context for all workers
     std::string masterTraceContext = OpenTelemetryUtil::getCurrentTraceContext();
@@ -354,37 +807,10 @@ void CypherQueryExecutor::execute() {
     }
     cypher_logger.info("###CYPHER-QUERY-EXECUTOR### Executing Query : Completed");
 
-    workerResponded = true;
-    JobResponse jobResponse;
-    jobResponse.setJobId(request.getJobId());
-    responseVector.push_back(jobResponse);
-
-    responseVectorMutex.lock();
-    responseMap[request.getJobId()] = jobResponse;
-    responseVectorMutex.unlock();
-
     auto end = chrono::high_resolution_clock::now();
     auto dur = end - begin;
     auto msDuration = std::chrono::duration_cast<std::chrono::milliseconds>(dur).count();
-
-    std::string durationString = std::to_string(msDuration);
-
-    if (canCalibrate || autoCalibrate) {
-        Utils::updateSLAInformation(perfDB, graphId, numberOfPartitions, msDuration, CYPHER,
-                                    Conts::SLA_CATEGORY::LATENCY);
-        isStatCollect = false;
-    }
-
-    processStatusMutex.lock();
-    for (auto processCompleteIterator = processData.begin(); processCompleteIterator != processData.end();
-         ++processCompleteIterator) {
-        ProcessInfo processInformation = *processCompleteIterator;
-        if (processInformation.id == uniqueId) {
-            processData.erase(processInformation);
-            break;
-        }
-    }
-    processStatusMutex.unlock();
+    finalizeExecution(msDuration);
 }
 
 void CypherQueryExecutor::doCypherQuery(const std::string& host, int port, const std::string& masterIP, int graphID,
