@@ -30,7 +30,6 @@ struct GraphConfig {
 
 class NodeManager {
  private:
-    unsigned int nextNodeIndex = 0;
     std::fstream* nodeDBT;
     unsigned int graphID = 0;
     unsigned int partitionID = 0;
@@ -38,10 +37,7 @@ class NodeManager {
     // static const std::string FILE_MODE;
     unsigned long INDEX_KEY_SIZE = 6;  // Size of an index key entry in bytes
     std::string indexDBPath;
-
     std::string edgeIndexDBPath;
-
-
 
     void persistNodeIndex();
     void persistEdgeIndex();
@@ -51,6 +47,8 @@ class NodeManager {
 
  public:
     unsigned long nextEdgeIndex = 0;
+    unsigned int nextNodeIndex = 0;
+
     static unsigned int nextPropertyIndex;  // Next available property block index
     std::unordered_map<std::string, unsigned int> nodeIndex;
     std::unordered_map<std::string, unsigned int> edgeIndex;

@@ -1,4 +1,4 @@
-"""Copyright 2025 JasmineGraph Team
+"""Copyright 206 JasmineGraph Team
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
@@ -141,7 +141,7 @@ def test(host, port):
         send_and_expect_response(
             sock,
             "adhdfs",
-            b"/home/graph_with_properties.txt",
+            b"/home/graph_data_1GB.txt",
             b"Is this an edge list type graph(y/n)?",
             exit_on_failure=True,
         )

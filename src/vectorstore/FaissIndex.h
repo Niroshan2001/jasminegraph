@@ -19,10 +19,9 @@ limitations under the License.
 #include <vector>
 class FaissIndex {
  public:
-  static FaissIndex* getInstance(int embeddingDim, const std::string& filepath);
-
   ~FaissIndex();
-  faiss::idx_t add(const std::vector<float>& embedding, std::string nodeId);
+  static FaissIndex* getInstance(int embeddingDim, const std::string& filepath);
+        faiss::idx_t add(const std::vector<float>& embedding, std::string nodeId);
 
   faiss::idx_t add(const std::vector<float>& embedding);
 
@@ -33,12 +32,16 @@ class FaissIndex {
   void save(const std::string& filepath);
   void save();
   void load(const std::string& filepath);
+  bool isEmbeddingExist(std::string nodeId);
+  bool isNodeEmbeddingExist(std::string nodeId);
   std::vector<float> getEmbeddingById(std::string id);
   std::string getNodeIdFromEmbeddingId(faiss::idx_t embeddingId);
+  std::vector<std::vector<float>> getEmbeddingsByIds(const std::vector<std::string>& nodeIds);
   std::string getNodeIdFromEmbeddingId(std::string embeddingId) const;
 
  private:
   FaissIndex(int embeddingDim, const std::string& filepath);
+
 
   int dim;
   faiss::IndexFlatL2* index;
@@ -50,4 +53,7 @@ class FaissIndex {
 
   static std::unique_ptr<FaissIndex> instance;
   static std::once_flag initFlag;
+       static std::unordered_map<std::string,
+        std::unique_ptr<FaissIndex>> instances;
+    static std::mutex instancesMutex;
 };

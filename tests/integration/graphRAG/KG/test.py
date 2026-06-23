@@ -1,4 +1,4 @@
-"""Copyright 2025 JasmineGraph Team
+"""Copyright 206 JasmineGraph Team
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
@@ -31,13 +31,13 @@ LINE_END = b"\r\n"
 TEXT_FOLDER = "gold"
 
 # LLM runner configuration
-LLM_RUNNERS = f"http://{SERVER_IP}:11441," * 2
+LLM_RUNNERS = f"http://{SERVER_IP}:11450:2"
 RUNNER_URLS = [u.strip() for u in LLM_RUNNERS.split(",") if u.strip()]
 REASONING_MODEL_URI = RUNNER_URLS[0] if RUNNER_URLS else None
 LLM_MODEL = "gemma3:1b"
 LLM_INFERENCE_ENGINE = "ollama"
 
-CHUNK_SIZE = "2048"
+CHUNK_SIZE = "1000"
 
 # HDFS target folder
 HDFS_BASE = "/home/"
@@ -165,10 +165,38 @@ def parse_results(raw_rows):
         except (json.JSONDecodeError, KeyError) as err:
             logging.warning("Could not parse row: %s (%s)", row, err)
     return triples
+def run_sbs_query(graph_id, query, host, port):
+    """Run SBS query and return JSON rows."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.connect((host, port))
+        logging.info("Connected to JasmineGraph at %s:%d for SBS", host, port)
 
+        # Enter SBS mode
+        sock.sendall(b"sbs" + LINE_END)
+        recv_until(sock, b"\n")
+
+        # Send graph ID
+        sock.sendall(graph_id.encode("utf-8") + LINE_END)
+        recv_until(sock, b"\n")
+
+        # Send SBS natural-language query
+        print("sbs query:", query)
+        sock.sendall(query.encode("utf-8") + LINE_END)
+
+        results = []
+        while True:
+            line = recv_until(sock, b"\n").strip()
+            if not line or "done" in line:
+                break
+            results.append(line)
+
+        sock.sendall(b"exit" + LINE_END)
+        print(results)
+        return results
 
 def test_kg(text_folder, upload_file_script, host, port):
     """Upload files, construct KGs, query them, and store triples."""
+    logging.info("test")
     query = "MATCH (n)-[r]-(m) RETURN n,r,m"
     all_txt_files = []
 
@@ -178,27 +206,22 @@ def test_kg(text_folder, upload_file_script, host, port):
                 all_txt_files.append(os.path.join(root, file))
 
     random.shuffle(all_txt_files)
-
+    graph_ids = []
     for local_path in all_txt_files:
-        folder_name = os.path.basename(os.path.dirname(local_path))
         try:
             hdfs_path = upload_to_hdfs(local_path, upload_file_script)
             graph_id = send_file_to_master(hdfs_path, host, port)
+            graph_ids.append(graph_id)
         except subprocess.CalledProcessError as err:
             logging.error("Failed to upload %s to HDFS: %s", local_path, err)
             continue
 
         # Wait for KG construction
-        time.sleep(240)
+        time.sleep(120)
         raw = run_cypher_query(str(graph_id), query, host, port)
         triples = parse_results(raw)
         print(json.dumps(triples, indent=2, ensure_ascii=False))
-
-        output_dir = os.path.join("pred", folder_name)
-        os.makedirs(output_dir, exist_ok=True)
-
-        with open(os.path.join(output_dir, "pred.json"), "w", encoding="utf-8") as f:
-            json.dump(triples, f, indent=2, ensure_ascii=False)
+    return graph_ids
 
 if __name__ == "__main__":
     test_kg(TEXT_FOLDER, UPLOAD_SCRIPT, HOST, PORT)

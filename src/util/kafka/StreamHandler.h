@@ -25,10 +25,10 @@ limitations under the License.
 
 class StreamHandler {
  public:
-    StreamHandler(KafkaConnector *kstream, int numberOfPartitions,
-                  std::vector<DataPublisher *> &workerClients, SQLiteDBInterface* sqlite,
-                  int graphId, bool isDirected, spt::Algorithms algo = spt::Algorithms::HASH,
-                  std::shared_ptr<std::atomic<bool>> stopFlag = nullptr);
+        StreamHandler(KafkaConnector *kstream, int numberOfPartitions,
+                   std::vector<DataPublisher *> &workerClients, SQLiteDBInterface* sqlite,
+                   int graphId, bool isDirected, spt::Algorithms algo = spt::Algorithms::HASH,
+                   std::shared_ptr<std::atomic<bool>> stopFlag = nullptr);
     void listen_to_kafka_topic();
     cppkafka::Message pollMessage();
     bool isErrorInMessage(const cppkafka::Message &msg);
