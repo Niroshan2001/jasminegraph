@@ -3461,9 +3461,9 @@ static void add_graph_command(std::string masterIP, int connFd, SQLiteDBInterfac
             partitioner.loadDataSet(reformattedFilePath, newGraphID);
             partitioner.constructMetisFormat(Conts::GRAPH_TYPE_NORMAL_REFORMATTED);
             fullFileList = partitioner.partitionWithGPMetis(partitionCount);
-        } 
+        }
         fullFileList = partitioner.partitionWithGPMetis(partitionCount);
-        
+
         frontend_logger.info("Upload done");
         JasmineGraphServer* server = JasmineGraphServer::getInstance();
         server->uploadGraphLocally(newGraphID, Conts::GRAPH_TYPE_NORMAL, fullFileList, masterIP);
