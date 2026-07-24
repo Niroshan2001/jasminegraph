@@ -50,10 +50,13 @@ class JasmineGraphIncrementalLocalStore {
     // batch texts to embed
 
     bool embedNode;
+
     void addEdgeFromString(std::string edgeString);
+    void addEdgeFromJson(const json& edgeJson);
     static std::pair<std::string, unsigned int> getIDs(std::string edgeString);
     JasmineGraphIncrementalLocalStore(unsigned int graphID = 0, unsigned int partitionID = 0,
                                       std::string openMode = "trunk", bool embedNode = false);
+    ~JasmineGraphIncrementalLocalStore();
     void setNodeManger(NodeManager* node_manager);
     void getAndStoreEmbeddings();
     bool getAndStoreEdgeEmbeddings();

@@ -13,6 +13,7 @@ limitations under the License.
 
 #include "RelationBlock.h"
 
+#include <memory>
 #include <sstream>
 #include <vector>
 
@@ -743,6 +744,17 @@ bool RelationBlock::updateCentralRelationshipType(int offset, std::string data) 
 }
 
 bool RelationBlock::isInUse() { return this->usage == '\1'; }
+
+RelationBlock::~RelationBlock() {
+    if (ownsSourceBlock && sourceBlock) {
+        delete sourceBlock;
+        sourceBlock = nullptr;
+    }
+    if (ownsDestinationBlock && destinationBlock) {
+        delete destinationBlock;
+        destinationBlock = nullptr;
+    }
+}
 thread_local unsigned int RelationBlock::nextLocalRelationIndex =
         1;  // Starting with 1 because of the 0 and '\0' differentiation issue
 thread_local unsigned int RelationBlock::nextCentralRelationIndex =
@@ -751,7 +763,7 @@ thread_local unsigned int RelationBlock::nextCentralRelationIndex =
 
 void RelationBlock::addLocalProperty(std::string name, char* value) {
     if (this->propertyAddress == 0) {
-        PropertyEdgeLink* newLink = PropertyEdgeLink::create(name, value);
+        std::unique_ptr<PropertyEdgeLink> newLink(PropertyEdgeLink::create(name, value));
         if (newLink) {
             this->propertyAddress = newLink->blockAddress;
             // If it was an empty prop link before inserting, Then update the property reference of this node
@@ -762,12 +774,15 @@ void RelationBlock::addLocalProperty(std::string name, char* value) {
                     std::to_string(this->addr) + " node block");
         }
     } else {
-        this->propertyAddress = this->getPropertyHead()->insert(name, value);
+        std::unique_ptr<PropertyEdgeLink> propertyHead(this->getPropertyHead());
+        if (propertyHead) {
+            this->propertyAddress = propertyHead->insert(name, value);
+        }
     }
 }
 void RelationBlock::addCentralProperty(std::string name, char* value) {
     if (this->propertyAddress == 0) {
-        PropertyEdgeLink* newLink = PropertyEdgeLink::create(name, value);
+        std::unique_ptr<PropertyEdgeLink> newLink(PropertyEdgeLink::create(name, value));
         if (newLink) {
             this->propertyAddress = newLink->blockAddress;
             // If it was an empty prop link before inserting, Then update the property reference of this node
@@ -778,13 +793,16 @@ void RelationBlock::addCentralProperty(std::string name, char* value) {
                     std::to_string(this->addr) + " node block");
         }
     } else {
-        this->propertyAddress = this->getPropertyHead()->insert(name, value);
+        std::unique_ptr<PropertyEdgeLink> propertyHead(this->getPropertyHead());
+        if (propertyHead) {
+            this->propertyAddress = propertyHead->insert(name, value);
+        }
     }
 }
 
 void RelationBlock::addMetaProperty(std::string name, char *value) {
     if (this->metaPropertyAddress == 0) {
-        MetaPropertyEdgeLink* newLink = MetaPropertyEdgeLink::create(name, value);
+        std::unique_ptr<MetaPropertyEdgeLink> newLink(MetaPropertyEdgeLink::create(name, value));
         if (newLink) {
             this->metaPropertyAddress = newLink->blockAddress;
             // If it was an empty prop link before inserting, Then update the property reference of this node
@@ -796,7 +814,10 @@ void RelationBlock::addMetaProperty(std::string name, char *value) {
                                         std::to_string(this->addr) + " node block");
         }
     } else {
-        this->metaPropertyAddress = this->getMetaPropertyHead()->insert(name, value);
+        std::unique_ptr<MetaPropertyEdgeLink> metaPropertyHead(this->getMetaPropertyHead());
+        if (metaPropertyHead) {
+            this->metaPropertyAddress = metaPropertyHead->insert(name, value);
+        }
     }
 }
 
@@ -876,8 +897,10 @@ NodeBlock* RelationBlock::getSource() {
 
         return sourceBlock;
     }
-    relation_block_logger.warn("Get source from node block address is not implemented yet!");
-    return NULL;
+
+    this->sourceBlock = NodeBlock::get(this->source.address);
+    this->ownsSourceBlock = true;
+    return sourceBlock;
 }
 
 /**
@@ -888,8 +911,10 @@ NodeBlock* RelationBlock::getDestination() {
     if (this->destinationBlock) {
         return destinationBlock;
     }
-    relation_block_logger.warn("Get destination from node block address is not implemented yet!");
-    return NULL;
+
+    this->destinationBlock = NodeBlock::get(this->destination.address);
+    this->ownsDestinationBlock = true;
+    return destinationBlock;
 }
 
 thread_local const unsigned long RelationBlock::BLOCK_SIZE = RelationBlock::RECORD_SIZE *

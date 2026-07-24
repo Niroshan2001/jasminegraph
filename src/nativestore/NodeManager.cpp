@@ -250,8 +250,8 @@ std::unordered_map<std::string, unsigned int> NodeManager::readEdgeIndex() {
 RelationBlock *NodeManager::addLocalRelation(NodeBlock source, NodeBlock destination) {
     RelationBlock *newRelation = NULL;
 
-        RelationBlock *relationBlock = new RelationBlock(source, destination);
-        newRelation = relationBlock->addLocalRelation(source, destination);
+        RelationBlock relationBlock(source, destination);
+        newRelation = relationBlock.addLocalRelation(source, destination);
         if (newRelation) {
             source.updateLocalRelation(newRelation, true);
             destination.updateLocalRelation(newRelation, true);
@@ -276,8 +276,8 @@ RelationBlock *NodeManager::addLocalRelation(NodeBlock source, NodeBlock destina
 RelationBlock *NodeManager::addCentralRelation(NodeBlock source, NodeBlock destination) {
     RelationBlock *newRelation = NULL;
 
-        RelationBlock *relationBlock = new RelationBlock(source, destination);
-        newRelation = relationBlock->addCentralRelation(source, destination);
+        RelationBlock relationBlock(source, destination);
+        newRelation = relationBlock.addCentralRelation(source, destination);
         if (newRelation) {
             source.updateCentralRelation(newRelation, true);
             destination.updateCentralRelation(newRelation, true);
@@ -658,21 +658,47 @@ std::map<long, long> NodeManager::getDistributionMap() {
 void NodeManager::close() {
     this->persistNodeIndex();
     this->persistEdgeIndex();
+    if (MetaPropertyLink::metaPropertiesDB) {
+        MetaPropertyLink::metaPropertiesDB->flush();
+        MetaPropertyLink::metaPropertiesDB->close();
+        delete MetaPropertyLink::metaPropertiesDB;
+        MetaPropertyLink::metaPropertiesDB = nullptr;
+    }
+    if (PropertyEdgeLink::edgePropertiesDB) {
+        PropertyEdgeLink::edgePropertiesDB->flush();
+        PropertyEdgeLink::edgePropertiesDB->close();
+        delete PropertyEdgeLink::edgePropertiesDB;
+        PropertyEdgeLink::edgePropertiesDB = nullptr;
+    }
+    if (MetaPropertyEdgeLink::metaEdgePropertiesDB) {
+        MetaPropertyEdgeLink::metaEdgePropertiesDB->flush();
+        MetaPropertyEdgeLink::metaEdgePropertiesDB->close();
+        delete MetaPropertyEdgeLink::metaEdgePropertiesDB;
+        MetaPropertyEdgeLink::metaEdgePropertiesDB = nullptr;
+    }
     if (PropertyLink::propertiesDB) {
         PropertyLink::propertiesDB->flush();
         PropertyLink::propertiesDB->close();
+        delete PropertyLink::propertiesDB;
+        PropertyLink::propertiesDB = nullptr;
     }
     if (NodeBlock::nodesDB) {
         NodeBlock::nodesDB->flush();
         NodeBlock::nodesDB->close();
+        delete NodeBlock::nodesDB;
+        NodeBlock::nodesDB = nullptr;
     }
     if (RelationBlock::relationsDB) {
         RelationBlock::relationsDB->flush();
         RelationBlock::relationsDB->close();
+        delete RelationBlock::relationsDB;
+        RelationBlock::relationsDB = nullptr;
     }
     if (RelationBlock::centralRelationsDB) {
         RelationBlock::centralRelationsDB->flush();
         RelationBlock::centralRelationsDB->close();
+        delete RelationBlock::centralRelationsDB;
+        RelationBlock::centralRelationsDB = nullptr;
     }
 }
 

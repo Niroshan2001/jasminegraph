@@ -39,13 +39,13 @@ class NodeManager {
     std::string indexDBPath;
     std::string edgeIndexDBPath;
 
-    void persistNodeIndex();
-    void persistEdgeIndex();
     std::unordered_map<std::string, unsigned int> readNodeIndex();
     std::unordered_map<std::string, unsigned int> readEdgeIndex();
     void addNodeIndex(std::string nodeId, unsigned int nodeIndex);
 
  public:
+    void persistNodeIndex();
+    void persistEdgeIndex();
     unsigned long nextEdgeIndex = 0;
     unsigned int nextNodeIndex = 0;
 

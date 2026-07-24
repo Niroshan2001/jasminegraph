@@ -58,6 +58,7 @@ class Utils {
   };
 
   static std::string getJasmineGraphProperty(std::string key);
+    static std::string getJasmineGraphPropertyFallback(const std::vector<std::string> &keys);
 
   static std::vector<worker> getWorkerList(SQLiteDBInterface* sqlite);
 
@@ -104,6 +105,8 @@ class Utils {
   static std::string getJasmineGraphHome();
 
   static std::string getHomeDir();
+
+    static std::string expand_path(const std::string &path);
 
   static int copyFile(const std::string sourceFilePath, const std::string destinationFilePath);
 

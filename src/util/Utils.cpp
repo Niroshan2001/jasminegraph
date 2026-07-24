@@ -131,10 +131,20 @@ std::string Utils::getJasmineGraphProperty(std::string key) {
     return "";
 }
 
+std::string Utils::getJasmineGraphPropertyFallback(const std::vector<std::string> &keys) {
+    for (const auto &k : keys) {
+        std::string v = Utils::getJasmineGraphProperty(k);
+        v = Utils::trim_copy(v);
+        if (!v.empty()) return v;
+    }
+    return std::string();
+}
+
+
 std::vector<Utils::worker> Utils::getWorkerList(SQLiteDBInterface* sqlite) {
     vector<Utils::worker> workerVector;
     std::vector<vector<pair<string, string>>> v =
-        sqlite->runSelect("SELECT idworker,user,ip,server_port,server_data_port FROM worker;");
+        sqlite->runSelect("SELECT idworker,user,ip,server_port,server_data_port FROM worker ORDER BY idworker;");
     for (int i = 0; i < v.size(); i++) {
         string workerID = v[i][0].second;
         string user = v[i][1].second;
@@ -333,6 +343,20 @@ std::string Utils::getHomeDir() {
         homedir = getpwuid(getuid())->pw_dir;
     }
     return string(homedir);
+}
+
+std::string Utils::expand_path(const std::string &path) {
+    if (path.empty() || path[0] != '~') {
+        return path;
+    }
+    std::string home = getHomeDir();
+    if (path.size() == 1) {
+        return home;
+    }
+    if (path[1] == '/') {
+        return home + path.substr(1);
+    }
+    return path;
 }
 
 /**
@@ -624,6 +648,12 @@ int Utils::connect_wrapper(int sock, const sockaddr* addr, socklen_t slen) {
             tv = {0, 0};
             if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (char *)&tv, sizeof(tv)) == -1) {
                 util_logger.error("Failed to set receive timeout after successful connection");
+            }
+            if (setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (char *)&tv, sizeof(tv)) == -1) {
+                util_logger.error("Failed to set send timeout option for socket after successful connection");
+            }
+            if (setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (char *)&tv, sizeof(tv)) == -1) {
+                util_logger.error("Failed to set send timeout option for socket after successful connection");
             }
             return 0;
         }
@@ -992,6 +1022,11 @@ std::string Utils::send_job(std::string job_group_name, std::string metric_name,
         if (res != CURLE_OK || code != 200) {
             util_logger.error("curl failed: " + std::string(curl_easy_strerror(res)) + "| url: " + hostPGAddr +
                               "| data: " + job_data);
+        }
+
+        if (headers) {
+            curl_slist_free_all(headers);
+            headers = NULL;
         }
 
         curl_easy_cleanup(curl);
