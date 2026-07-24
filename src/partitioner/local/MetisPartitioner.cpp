@@ -203,7 +203,7 @@ int MetisPartitioner::constructMetisFormat(string graph_type) {
 
 std::vector<std::map<int, std::string>> MetisPartitioner::partitionWithGPMetis(string partitionCount) {
     partitioner_logger.log("Partitioning with gpmetis", "info");
-    if (partitionCount != "") {
+    if (partitionCount != Conts::DEFAULT_PARTITION_COUNT) {
         nParts = atoi(partitionCount.c_str());
     } else {
         partitioner_logger.log("Using the default partition count " + partitionCount, "info");

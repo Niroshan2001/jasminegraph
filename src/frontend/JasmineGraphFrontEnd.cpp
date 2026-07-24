@@ -3368,7 +3368,7 @@ static void add_rdf_command(std::string masterIP, int connFd, SQLiteDBInterface*
         metisPartitioner.loadDataSet(input_file_path, newGraphID);
 
         metisPartitioner.constructMetisFormat(Conts::GRAPH_TYPE_RDF);
-        fullFileList = metisPartitioner.partitionWithGPMetis("");
+        fullFileList = metisPartitioner.partitionWithGPMetis(Conts::DEFAULT_PARTITION_COUNT);
         JasmineGraphServer* server = JasmineGraphServer::getInstance();
         server->uploadGraphLocally(newGraphID, Conts::GRAPH_WITH_ATTRIBUTES, fullFileList, masterIP);
         Utils::deleteDirectory(Utils::getHomeDir() + "/.jasminegraph/tmp/" + to_string(newGraphID));
@@ -3671,7 +3671,7 @@ static void add_graph_cust_command(std::string masterIP, int connFd, SQLiteDBInt
             partitioner.loadDataSet(reformattedFilePath, newGraphID);
             partitioner.constructMetisFormat(Conts::GRAPH_TYPE_NORMAL_REFORMATTED);
         }
-        fullFileList = partitioner.partitionWithGPMetis("");
+        fullFileList = partitioner.partitionWithGPMetis(Conts::DEFAULT_PARTITION_COUNT);
 
         // Graph type should be changed to identify graphs with attributes
         // because this graph type has additional attribute files to be uploaded
