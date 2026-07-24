@@ -93,6 +93,8 @@ using namespace std;
 using namespace std::chrono;
 
 Logger frontend_logger;
+const std::string GRAPH_TYPE_NOT_RECOGNIZED = "Graph type not recognized";
+const std::string DATA_TYPE_NOT_RECOGNIZED = "Data type not recognized";
 
 static void parseHdfsConfigFile(const std::string &filePath, std::string &hdfsServerIp, std::string &hdfsPort) {
     std::vector<std::string> vec = Utils::getFileContent(filePath);
@@ -3459,9 +3461,9 @@ static void add_graph_command(std::string masterIP, int connFd, SQLiteDBInterfac
             partitioner.loadDataSet(reformattedFilePath, newGraphID);
             partitioner.constructMetisFormat(Conts::GRAPH_TYPE_NORMAL_REFORMATTED);
             fullFileList = partitioner.partitionWithGPMetis(partitionCount);
-        } else {
-            fullFileList = partitioner.partitionWithGPMetis(partitionCount);
-        }
+        } 
+        fullFileList = partitioner.partitionWithGPMetis(partitionCount);
+        
         frontend_logger.info("Upload done");
         JasmineGraphServer* server = JasmineGraphServer::getInstance();
         server->uploadGraphLocally(newGraphID, Conts::GRAPH_TYPE_NORMAL, fullFileList, masterIP);
@@ -3546,8 +3548,8 @@ static void add_graph_cust_command(std::string masterIP, int connFd, SQLiteDBInt
     try {
         graphTypeValue = std::stoi(graphType);
     } catch (const std::exception&) {
-        frontend_logger.error("Graph type not recognized");
-        result_wr = write(connFd, "Graph type not recognized", strlen("Graph type not recognized"));
+        frontend_logger.error(GRAPH_TYPE_NOT_RECOGNIZED);
+        result_wr = write(connFd, GRAPH_TYPE_NOT_RECOGNIZED.c_str(), GRAPH_TYPE_NOT_RECOGNIZED.length());
         if (result_wr < 0) {
             frontend_logger.error("Error writing to socket");
             *loop_exit_p = true;
@@ -3567,8 +3569,8 @@ static void add_graph_cust_command(std::string masterIP, int connFd, SQLiteDBInt
             graphAttributeType = Conts::GRAPH_WITH_XML_ATTRIBUTES;
             break;
         default:
-        frontend_logger.error("Graph type not recognized");
-        result_wr = write(connFd, "Graph type not recognized", strlen("Graph type not recognized"));
+        frontend_logger.error(GRAPH_TYPE_NOT_RECOGNIZED);
+        result_wr = write(connFd, GRAPH_TYPE_NOT_RECOGNIZED.c_str(), GRAPH_TYPE_NOT_RECOGNIZED.length());
         if (result_wr < 0) {
             frontend_logger.error("Error writing to socket");
             *loop_exit_p = true;
@@ -3634,8 +3636,8 @@ static void add_graph_cust_command(std::string masterIP, int connFd, SQLiteDBInt
     if (strArr.size() == ATTR_DATA_TYPE_ARG_COUNT) {
         attrDataType = strArr[DATA_TYPE_INDEX];
         if (VALID_DATA_TYPES.find(attrDataType) == VALID_DATA_TYPES.end()) {
-            frontend_logger.error("Data type not recognized");
-            result_wr = write(connFd, "Data type not recognized", strlen("Data type not recognized"));
+            frontend_logger.error(DATA_TYPE_NOT_RECOGNIZED);
+            result_wr = write(connFd, DATA_TYPE_NOT_RECOGNIZED.c_str(), DATA_TYPE_NOT_RECOGNIZED.length());
             if (result_wr < 0) {
                 frontend_logger.error("Error writing to socket");
                 *loop_exit_p = true;

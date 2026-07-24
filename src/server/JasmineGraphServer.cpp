@@ -383,8 +383,8 @@ void JasmineGraphServer::waitForAcknowledgement(int numberOfWorkers) {
             break;
         }
         auto end = chrono::high_resolution_clock::now();
-        auto dur = end - begin;
-        auto msDuration = std::chrono::duration_cast<std::chrono::milliseconds>(dur).count();
+        auto duration = end - begin;
+        auto msDuration = std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
         timeDifference = msDuration;
     }
 }
