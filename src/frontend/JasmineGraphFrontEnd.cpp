@@ -4026,7 +4026,7 @@ static void add_stream_kafka_command(int connFd, std::string &kafka_server_IP, c
     // Get user response.
     string default_kafka = Utils::getFrontendInput(connFd);
     //          use default kafka consumer details
-    string group_id =  Conts::KAFKA_GROUP_ID;  // TODO(sakeerthan): MOVE TO CONSTANT LATER
+    string group_id =  Conts::KAFKA_GROUP_ID;
     if (default_kafka == "y") {
         kafka_server_IP = Utils::getJasmineGraphProperty("org.jasminegraph.server.streaming.kafka.host");
         configs = {
@@ -4036,7 +4036,7 @@ static void add_stream_kafka_command(int connFd, std::string &kafka_server_IP, c
             {"enable.auto.commit", "false"},
         };
     } else {
-        // user need to start relevant kafka cluster using relevant IP address
+        // user needs to start relevant kafka cluster using relevant IP address
         // read relevant IP address from given file path
         string message = "Send file path to the kafka configuration file.";
         result_wr = write(connFd, message.c_str(), message.length());
