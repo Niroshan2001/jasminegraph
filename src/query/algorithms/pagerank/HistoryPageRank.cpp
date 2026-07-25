@@ -129,9 +129,8 @@ uint32_t decodeDestIndex(uint64_t encoded) {
 }
 
 bool parsePartitionIdFromBitmapFileName(const std::string& fileName,
-                                        int graphId,
+                                        const std::string& prefix,
                                         uint32_t& partitionId) {
-    const std::string prefix = "graph" + std::to_string(graphId) + "_part";
     const std::string suffix = "_bitmaps.ebm";
 
     if (fileName.rfind(prefix, 0) != 0) {
@@ -154,14 +153,17 @@ bool parsePartitionIdFromBitmapFileName(const std::string& fileName,
         return false;
     }
 
-    partitionId = static_cast<uint32_t>(std::stoul(partitionText));
-    return true;
+    try {
+        partitionId = static_cast<uint32_t>(std::stoul(partitionText));
+        return true;
+    } catch (...) {
+        return false;
+    }
 }
 
 bool parsePartitionIdFromDeltaFileName(const std::string& fileName,
-                                       int graphId,
+                                       const std::string& prefix,
                                        uint32_t& partitionId) {
-    const std::string prefix = "graph" + std::to_string(graphId) + "_part";
     const std::string splitMarker = "_snap";
     const std::string suffix = ".delta";
 
@@ -189,8 +191,12 @@ bool parsePartitionIdFromDeltaFileName(const std::string& fileName,
         return false;
     }
 
-    partitionId = static_cast<uint32_t>(std::stoul(partitionText));
-    return true;
+    try {
+        partitionId = static_cast<uint32_t>(std::stoul(partitionText));
+        return true;
+    } catch (...) {
+        return false;
+    }
 }
 
 std::vector<uint32_t> discoverBitmapPartitions(const std::string& snapshotDir, int graphId) {
@@ -198,10 +204,11 @@ std::vector<uint32_t> discoverBitmapPartitions(const std::string& snapshotDir, i
     std::vector<uint32_t> partitionIds;
     partitionIds.reserve(files.size());
 
+    const std::string prefix = "graph" + std::to_string(graphId) + "_part";
     for (const auto& file : files) {
         uint32_t partitionId = 0;
-        if (parsePartitionIdFromBitmapFileName(file, graphId, partitionId) ||
-            parsePartitionIdFromDeltaFileName(file, graphId, partitionId)) {
+        if (parsePartitionIdFromBitmapFileName(file, prefix, partitionId) ||
+            parsePartitionIdFromDeltaFileName(file, prefix, partitionId)) {
             partitionIds.push_back(partitionId);
         }
     }
