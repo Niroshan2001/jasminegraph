@@ -196,10 +196,12 @@ bool flushHistoryTriangleBatch(int sockfd,
     }
 
     for (const auto& edge : batch) {
-        if (!sendUint32(sockfd, static_cast<uint32_t>(edge.first.size())) ||
-            !sendAll(sockfd, edge.first.data(), edge.first.size()) ||
-            !sendUint32(sockfd, static_cast<uint32_t>(edge.second.size())) ||
-            !sendAll(sockfd, edge.second.data(), edge.second.size())) {
+        size_t uSize = edge.first.size();
+        size_t vSize = edge.second.size();
+        if (!sendUint32(sockfd, static_cast<uint32_t>(uSize)) ||
+            !sendAll(sockfd, edge.first.data(), uSize) ||
+            !sendUint32(sockfd, static_cast<uint32_t>(vSize)) ||
+            !sendAll(sockfd, edge.second.data(), vSize)) {
             return false;
         }
     }
