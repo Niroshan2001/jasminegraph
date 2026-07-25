@@ -230,3 +230,4 @@ class PropertyIntervalDictionary {
 };
 
 #endif  // PROPERTY_INTERVAL_DICTIONARY_H
+

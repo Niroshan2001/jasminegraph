@@ -271,3 +271,4 @@ class EdgeLifespanBitmap {
 };
 
 #endif  // EDGE_LIFESPAN_BITMAP_H
+

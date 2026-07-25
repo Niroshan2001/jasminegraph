@@ -203,3 +203,4 @@ class BitmapCompression {
 };
 
 #endif  // BITMAP_COMPRESSION_H
+

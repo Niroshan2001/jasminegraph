@@ -146,3 +146,4 @@ class WorkerKafkaConsumer {
     static bool isEndOfStream(const cppkafka::Message& msg);
     static bool isErrorInMessage(const cppkafka::Message& msg);
 };
+

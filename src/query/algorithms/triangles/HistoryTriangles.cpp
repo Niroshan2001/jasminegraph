@@ -25,9 +25,7 @@ limitations under the License.
 
 #include "../../../util/Utils.h"
 
-#ifdef _OPENMP
-#include <omp.h>
-#endif
+#include <thread>
 
 namespace {
 
@@ -249,17 +247,18 @@ uint64_t countTrianglesOnCSRGraph(const std::vector<uint64_t>& csrOffsets,
     }
     const uint32_t nodeCount = static_cast<uint32_t>(csrOffsets.size() - 1);
     const uint32_t* neighborsData = csrNeighbors.data();
-    uint64_t triangleCount = 0;
+    std::atomic<uint64_t> triangleCount(0);
 
-#ifdef _OPENMP
-    // Parallelize triangle enumeration if graph is reasonably sized
-    // Reduced threshold from 2048 to 512 for better parallelization on medium graphs
-    if (nodeCount >= 512) {
-#pragma omp parallel for schedule(dynamic, 32) reduction(+:triangleCount)
-        for (int64_t sourceIndex = 0; sourceIndex < static_cast<int64_t>(nodeCount);
-             ++sourceIndex) {
-            uint64_t sourceBegin = csrOffsets[static_cast<size_t>(sourceIndex)];
-            uint64_t sourceEnd = csrOffsets[static_cast<size_t>(sourceIndex) + 1];
+    unsigned int numThreads = std::thread::hardware_concurrency();
+    if (numThreads == 0) numThreads = 2;
+    if (nodeCount < 512) numThreads = 1;
+
+    std::vector<std::thread> threads;
+    auto worker = [&](uint32_t threadId) {
+        uint64_t localCount = 0;
+        for (uint32_t sourceIndex = threadId; sourceIndex < nodeCount; sourceIndex += numThreads) {
+            uint64_t sourceBegin = csrOffsets[sourceIndex];
+            uint64_t sourceEnd = csrOffsets[sourceIndex + 1];
             const uint32_t* sourceNeighbors = neighborsData + sourceBegin;
             size_t sourceSize = static_cast<size_t>(sourceEnd - sourceBegin);
             for (size_t middleOffset = 0; middleOffset < sourceSize; ++middleOffset) {
@@ -269,40 +268,25 @@ uint64_t countTrianglesOnCSRGraph(const std::vector<uint64_t>& csrOffsets,
                 const uint32_t* middleNeighbors = neighborsData + middleBegin;
                 size_t middleSize = static_cast<size_t>(middleEnd - middleBegin);
                 if (sourceSize < middleSize) {
-                    triangleCount += countCommonSortedValues(sourceNeighbors, sourceSize,
-                                                             middleNeighbors, middleSize);
+                    localCount += countCommonSortedValues(sourceNeighbors, sourceSize,
+                                                           middleNeighbors, middleSize);
                 } else {
-                    triangleCount += countCommonSortedValues(middleNeighbors, middleSize,
-                                                             sourceNeighbors, sourceSize);
+                    localCount += countCommonSortedValues(middleNeighbors, middleSize,
+                                                           sourceNeighbors, sourceSize);
                 }
             }
         }
-        return triangleCount;
-    }
-#endif
+        triangleCount += localCount;
+    };
 
-    for (uint32_t sourceIndex = 0; sourceIndex < nodeCount; ++sourceIndex) {
-        uint64_t sourceBegin = csrOffsets[sourceIndex];
-        uint64_t sourceEnd = csrOffsets[sourceIndex + 1];
-        const uint32_t* sourceNeighbors = neighborsData + sourceBegin;
-        size_t sourceSize = static_cast<size_t>(sourceEnd - sourceBegin);
-        for (size_t middleOffset = 0; middleOffset < sourceSize; ++middleOffset) {
-            uint32_t middleIndex = sourceNeighbors[middleOffset];
-            uint64_t middleBegin = csrOffsets[middleIndex];
-            uint64_t middleEnd = csrOffsets[middleIndex + 1];
-            const uint32_t* middleNeighbors = neighborsData + middleBegin;
-            size_t middleSize = static_cast<size_t>(middleEnd - middleBegin);
-            if (sourceSize < middleSize) {
-                triangleCount += countCommonSortedValues(sourceNeighbors, sourceSize,
-                                                         middleNeighbors, middleSize);
-            } else {
-                triangleCount += countCommonSortedValues(middleNeighbors, middleSize,
-                                                         sourceNeighbors, sourceSize);
-            }
-        }
+    for (unsigned int i = 0; i < numThreads; ++i) {
+        threads.emplace_back(worker, i);
+    }
+    for (auto& t : threads) {
+        t.join();
     }
 
-    return triangleCount;
+    return triangleCount.load();
 }
 
 }  // namespace
@@ -454,46 +438,55 @@ TemporalTriangleResult HistoryTriangles::countTrianglesAtSnapshot(
     std::vector<uint64_t> shardCounts(EDGE_SHARD_COUNT, 0);
     static constexpr uint64_t MAX_CACHED_DEDUP_EDGES = 20000000ULL;
     std::atomic<uint64_t> cachedDedupEdges(0);
-#ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic) shared(deduplicatedShards, shardCounts)
-#endif
-    for (int shardId = 0; shardId < static_cast<int>(EDGE_SHARD_COUNT); ++shardId) {
-        std::vector<uint64_t> shardEdges = readEncodedEdgesFromBinaryFile(shardFilePaths[shardId]);
-        if (shardEdges.empty()) {
-            continue;
-        }
+    // Deduplicate shards in parallel using std::thread
+    unsigned int numThreads = std::thread::hardware_concurrency();
+    if (numThreads == 0) numThreads = 2;
+    std::vector<std::thread> threads;
+    auto dedupWorker = [&](int threadId) {
+        for (int shardId = threadId; shardId < static_cast<int>(EDGE_SHARD_COUNT); shardId += numThreads) {
+            std::vector<uint64_t> shardEdges = readEncodedEdgesFromBinaryFile(shardFilePaths[shardId]);
+            if (shardEdges.empty()) {
+                continue;
+            }
 
-        // Sort and deduplicate in parallel (each shard independently)
-        std::sort(shardEdges.begin(), shardEdges.end());
-        shardEdges.erase(std::unique(shardEdges.begin(), shardEdges.end()), shardEdges.end());
+            // Sort and deduplicate in parallel (each shard independently)
+            std::sort(shardEdges.begin(), shardEdges.end());
+            shardEdges.erase(std::unique(shardEdges.begin(), shardEdges.end()), shardEdges.end());
 
-        shardCounts[shardId] = shardEdges.size();
+            shardCounts[shardId] = shardEdges.size();
 
-        // Always persist the deduplicated shard so we can stream from disk when RAM budget is exceeded.
-        if (!rewriteUniqueEncodedEdgesToBinaryFile(shardFilePaths[shardId], shardEdges)) {
-            history_triangle_logger.error("Failed to rewrite deduplicated shard file " +
-                                         shardFilePaths[shardId]);
-            shardCounts[shardId] = 0;
-            continue;
-        }
+            // Always persist the deduplicated shard so we can stream from disk when RAM budget is exceeded.
+            if (!rewriteUniqueEncodedEdgesToBinaryFile(shardFilePaths[shardId], shardEdges)) {
+                history_triangle_logger.error("Failed to rewrite deduplicated shard file " +
+                                             shardFilePaths[shardId]);
+                shardCounts[shardId] = 0;
+                continue;
+            }
 
-        // Cache deduplicated edges in memory only while within a safe budget.
-        // This gives speedup on medium graphs and avoids OOM on very large snapshots.
-        bool keepInMemory = false;
-        uint64_t current = cachedDedupEdges.load(std::memory_order_relaxed);
-        while (current + shardEdges.size() <= MAX_CACHED_DEDUP_EDGES) {
-            if (cachedDedupEdges.compare_exchange_weak(current,
-                                                       current + shardEdges.size(),
-                                                       std::memory_order_relaxed,
-                                                       std::memory_order_relaxed)) {
-                keepInMemory = true;
-                break;
+            // Cache deduplicated edges in memory only while within a safe budget.
+            // This gives speedup on medium graphs and avoids OOM on very large snapshots.
+            bool keepInMemory = false;
+            uint64_t current = cachedDedupEdges.load(std::memory_order_relaxed);
+            while (current + shardEdges.size() <= MAX_CACHED_DEDUP_EDGES) {
+                if (cachedDedupEdges.compare_exchange_weak(current,
+                                                           current + shardEdges.size(),
+                                                           std::memory_order_relaxed,
+                                                           std::memory_order_relaxed)) {
+                    keepInMemory = true;
+                    break;
+                }
+            }
+
+            if (keepInMemory) {
+                deduplicatedShards[shardId] = std::move(shardEdges);
             }
         }
-
-        if (keepInMemory) {
-            deduplicatedShards[shardId] = std::move(shardEdges);
-        }
+    };
+    for (unsigned int i = 0; i < numThreads; ++i) {
+        threads.emplace_back(dedupWorker, i);
+    }
+    for (auto& t : threads) {
+        t.join();
     }
 
     // Accumulate edge counts from all shards
@@ -507,31 +500,32 @@ TemporalTriangleResult HistoryTriangles::countTrianglesAtSnapshot(
 
     phaseStart = nowMs();
 
-    // Parallelize degree accumulation across shards (atomic updates per endpoint)
-#ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic) shared(deduplicatedShards, degree)
-#endif
-    for (int shardId = 0; shardId < static_cast<int>(EDGE_SHARD_COUNT); ++shardId) {
+    // Parallelize degree accumulation across shards (atomic updates per endpoint) using std::thread
+    std::unique_ptr<std::atomic<uint32_t>[]> degree(new std::atomic<uint32_t>[nodeCount]());
+    threads.clear();
+    auto degreeWorker = [&](int threadId) {
         auto degreeUpdate = [&](uint64_t encoded) {
             uint32_t sourceIndex = decodeSourceIndex(encoded);
             uint32_t destIndex = decodeDestIndex(encoded);
-#ifdef _OPENMP
-#pragma omp atomic
-#endif
             degree[sourceIndex]++;
-#ifdef _OPENMP
-#pragma omp atomic
-#endif
             degree[destIndex]++;
         };
 
-        if (!deduplicatedShards[shardId].empty()) {
-            for (uint64_t encoded : deduplicatedShards[shardId]) {
-                degreeUpdate(encoded);
+        for (int shardId = threadId; shardId < static_cast<int>(EDGE_SHARD_COUNT); shardId += numThreads) {
+            if (!deduplicatedShards[shardId].empty()) {
+                for (uint64_t encoded : deduplicatedShards[shardId]) {
+                    degreeUpdate(encoded);
+                }
+            } else {
+                streamEncodedEdgesFromBinaryFile(shardFilePaths[shardId], degreeUpdate);
             }
-        } else {
-            streamEncodedEdgesFromBinaryFile(shardFilePaths[shardId], degreeUpdate);
         }
+    };
+    for (unsigned int i = 0; i < numThreads; ++i) {
+        threads.emplace_back(degreeWorker, i);
+    }
+    for (auto& t : threads) {
+        t.join();
     }
 
     result.degreeMs = static_cast<long>(nowMs() - phaseStart);
@@ -562,13 +556,10 @@ TemporalTriangleResult HistoryTriangles::countTrianglesAtSnapshot(
     nodeToIndex.clear();
     nodeToIndex.rehash(0);
 
-    // Parallelize forward degree computation across shards
-    std::vector<uint32_t> forwardDegree(nodeCount, 0);
-    phaseStart = nowMs();
-#ifdef _OPENMP
-#pragma omp parallel for shared(deduplicatedShards, degree, forwardDegree)
-#endif
-    for (int shardId = 0; shardId < static_cast<int>(EDGE_SHARD_COUNT); ++shardId) {
+    // Parallelize forward degree computation across shards using std::thread
+    std::unique_ptr<std::atomic<uint32_t>[]> forwardDegree(new std::atomic<uint32_t>[nodeCount]());
+    threads.clear();
+    auto forwardWorker = [&](int threadId) {
         auto updateForwardDegree = [&](uint64_t encoded) {
             uint32_t sourceIndex = decodeSourceIndex(encoded);
             uint32_t destIndex = decodeDestIndex(encoded);
@@ -577,25 +568,27 @@ TemporalTriangleResult HistoryTriangles::countTrianglesAtSnapshot(
                                     (degree[sourceIndex] == degree[destIndex] &&
                                      sourceIndex < destIndex);
             if (sourceBeforeDest) {
-#ifdef _OPENMP
-#pragma omp atomic
-#endif
                 forwardDegree[sourceIndex]++;
             } else {
-#ifdef _OPENMP
-#pragma omp atomic
-#endif
                 forwardDegree[destIndex]++;
             }
         };
 
-        if (!deduplicatedShards[shardId].empty()) {
-            for (uint64_t encoded : deduplicatedShards[shardId]) {
-                updateForwardDegree(encoded);
+        for (int shardId = threadId; shardId < static_cast<int>(EDGE_SHARD_COUNT); shardId += numThreads) {
+            if (!deduplicatedShards[shardId].empty()) {
+                for (uint64_t encoded : deduplicatedShards[shardId]) {
+                    updateForwardDegree(encoded);
+                }
+            } else {
+                streamEncodedEdgesFromBinaryFile(shardFilePaths[shardId], updateForwardDegree);
             }
-        } else {
-            streamEncodedEdgesFromBinaryFile(shardFilePaths[shardId], updateForwardDegree);
         }
+    };
+    for (unsigned int i = 0; i < numThreads; ++i) {
+        threads.emplace_back(forwardWorker, i);
+    }
+    for (auto& t : threads) {
+        t.join();
     }
 
     std::vector<uint64_t> csrOffsets(nodeCount + 1, 0);
@@ -604,12 +597,10 @@ TemporalTriangleResult HistoryTriangles::countTrianglesAtSnapshot(
     }
 
     std::vector<uint32_t> csrNeighbors(static_cast<size_t>(csrOffsets[nodeCount]));
-    std::fill(forwardDegree.begin(), forwardDegree.end(), 0);
+    std::unique_ptr<std::atomic<uint32_t>[]> forwardDegreeOffsets(new std::atomic<uint32_t>[nodeCount]());
 
-#ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic) shared(deduplicatedShards, degree, forwardDegree, csrOffsets, csrNeighbors)
-#endif
-    for (int shardId = 0; shardId < static_cast<int>(EDGE_SHARD_COUNT); ++shardId) {
+    threads.clear();
+    auto insertWorker = [&](int threadId) {
         auto insertForwardNeighbor = [&](uint64_t encoded) {
             uint32_t sourceIndex = decodeSourceIndex(encoded);
             uint32_t destIndex = decodeDestIndex(encoded);
@@ -618,50 +609,57 @@ TemporalTriangleResult HistoryTriangles::countTrianglesAtSnapshot(
                                     (degree[sourceIndex] == degree[destIndex] &&
                                      sourceIndex < destIndex);
             if (sourceBeforeDest) {
-                uint32_t slot = 0;
-#ifdef _OPENMP
-#pragma omp atomic capture
-#endif
-                slot = forwardDegree[sourceIndex]++;
+                uint32_t slot = forwardDegreeOffsets[sourceIndex]++;
                 csrNeighbors[static_cast<size_t>(csrOffsets[sourceIndex] + slot)] = destIndex;
             } else {
-                uint32_t slot = 0;
-#ifdef _OPENMP
-#pragma omp atomic capture
-#endif
-                slot = forwardDegree[destIndex]++;
+                uint32_t slot = forwardDegreeOffsets[destIndex]++;
                 csrNeighbors[static_cast<size_t>(csrOffsets[destIndex] + slot)] = sourceIndex;
             }
         };
 
-        if (!deduplicatedShards[shardId].empty()) {
-            for (uint64_t encoded : deduplicatedShards[shardId]) {
-                insertForwardNeighbor(encoded);
+        for (int shardId = threadId; shardId < static_cast<int>(EDGE_SHARD_COUNT); shardId += numThreads) {
+            if (!deduplicatedShards[shardId].empty()) {
+                for (uint64_t encoded : deduplicatedShards[shardId]) {
+                    insertForwardNeighbor(encoded);
+                }
+            } else {
+                streamEncodedEdgesFromBinaryFile(shardFilePaths[shardId], insertForwardNeighbor);
             }
-        } else {
-            streamEncodedEdgesFromBinaryFile(shardFilePaths[shardId], insertForwardNeighbor);
         }
+    };
+    for (unsigned int i = 0; i < numThreads; ++i) {
+        threads.emplace_back(insertWorker, i);
+    }
+    for (auto& t : threads) {
+        t.join();
     }
 
     result.forwardBuildMs = static_cast<long>(nowMs() - phaseStart);
 
-    std::vector<uint32_t>().swap(degree);
-    std::vector<uint32_t>().swap(forwardDegree);
+    degree.reset();
+    forwardDegree.reset();
+    forwardDegreeOffsets.reset();
     deduplicatedShards.clear();
     deduplicatedShards.shrink_to_fit();
 
-    // Sort forward neighbor lists in parallel
+    // Sort forward neighbor lists in parallel using std::thread
     phaseStart = nowMs();
-#ifdef _OPENMP
-#pragma omp parallel for shared(csrOffsets, csrNeighbors)
-#endif
-    for (int nodeIdx = 0; nodeIdx < static_cast<int>(nodeCount); ++nodeIdx) {
-        uint64_t begin = csrOffsets[static_cast<size_t>(nodeIdx)];
-        uint64_t end = csrOffsets[static_cast<size_t>(nodeIdx) + 1];
-        if (end > begin + 1) {
-            std::sort(csrNeighbors.begin() + static_cast<size_t>(begin),
-                      csrNeighbors.begin() + static_cast<size_t>(end));
+    threads.clear();
+    auto sortWorker = [&](int threadId) {
+        for (int nodeIdx = threadId; nodeIdx < static_cast<int>(nodeCount); nodeIdx += numThreads) {
+            uint64_t begin = csrOffsets[static_cast<size_t>(nodeIdx)];
+            uint64_t end = csrOffsets[static_cast<size_t>(nodeIdx) + 1];
+            if (end > begin + 1) {
+                std::sort(csrNeighbors.begin() + static_cast<size_t>(begin),
+                          csrNeighbors.begin() + static_cast<size_t>(end));
+            }
         }
+    };
+    for (unsigned int i = 0; i < numThreads; ++i) {
+        threads.emplace_back(sortWorker, i);
+    }
+    for (auto& t : threads) {
+        t.join();
     }
     result.sortMs = static_cast<long>(nowMs() - phaseStart);
 

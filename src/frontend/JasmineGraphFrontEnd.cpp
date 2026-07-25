@@ -1815,13 +1815,18 @@ uint64_t countTrianglesOnCSRGraph(const std::vector<uint64_t>& csrOffsets,
     }
     const uint32_t nodeCount = static_cast<uint32_t>(csrOffsets.size() - 1);
     const uint32_t* neighborsData = csrNeighbors.data();
-    uint64_t triangleCount = 0;
-#ifdef _OPENMP
-    if (nodeCount >= 2048) {
-#pragma omp parallel for schedule(dynamic, 64) reduction(+:triangleCount)
-        for (int64_t i = 0; i < static_cast<int64_t>(nodeCount); ++i) {
-            uint64_t srcBegin = csrOffsets[static_cast<size_t>(i)];
-            uint64_t srcEnd = csrOffsets[static_cast<size_t>(i) + 1];
+    std::atomic<uint64_t> triangleCount(0);
+
+    unsigned int numThreads = std::thread::hardware_concurrency();
+    if (numThreads == 0) numThreads = 2;
+    if (nodeCount < 512) numThreads = 1;
+
+    std::vector<std::thread> threads;
+    auto worker = [&](uint32_t threadId) {
+        uint64_t localCount = 0;
+        for (uint32_t i = threadId; i < nodeCount; i += numThreads) {
+            uint64_t srcBegin = csrOffsets[i];
+            uint64_t srcEnd = csrOffsets[i + 1];
             const uint32_t* srcNeighbors = neighborsData + srcBegin;
             size_t srcSize = static_cast<size_t>(srcEnd - srcBegin);
             for (size_t offset = 0; offset < srcSize; ++offset) {
@@ -1830,31 +1835,22 @@ uint64_t countTrianglesOnCSRGraph(const std::vector<uint64_t>& csrOffsets,
                 uint64_t midEnd = csrOffsets[mid + 1];
                 const uint32_t* midNeighbors = neighborsData + midBegin;
                 size_t midSize = static_cast<size_t>(midEnd - midBegin);
-                triangleCount += (srcSize < midSize)
+                localCount += (srcSize < midSize)
                     ? countCommonSortedValues(srcNeighbors, srcSize, midNeighbors, midSize)
                     : countCommonSortedValues(midNeighbors, midSize, srcNeighbors, srcSize);
             }
         }
-        return triangleCount;
+        triangleCount += localCount;
+    };
+
+    for (unsigned int i = 0; i < numThreads; ++i) {
+        threads.emplace_back(worker, i);
     }
-#endif
-    for (uint32_t i = 0; i < nodeCount; ++i) {
-        uint64_t srcBegin = csrOffsets[i];
-        uint64_t srcEnd = csrOffsets[i + 1];
-        const uint32_t* srcNeighbors = neighborsData + srcBegin;
-        size_t srcSize = static_cast<size_t>(srcEnd - srcBegin);
-        for (size_t offset = 0; offset < srcSize; ++offset) {
-            uint32_t mid = srcNeighbors[offset];
-            uint64_t midBegin = csrOffsets[mid];
-            uint64_t midEnd = csrOffsets[mid + 1];
-            const uint32_t* midNeighbors = neighborsData + midBegin;
-            size_t midSize = static_cast<size_t>(midEnd - midBegin);
-            triangleCount += (srcSize < midSize)
-                ? countCommonSortedValues(srcNeighbors, srcSize, midNeighbors, midSize)
-                : countCommonSortedValues(midNeighbors, midSize, srcNeighbors, srcSize);
-        }
+    for (auto& t : threads) {
+        t.join();
     }
-    return triangleCount;
+
+    return triangleCount.load();
 }
 
 bool rewriteUniqueEncodedEdgesToBinaryFile(const std::string& filePath,
@@ -2217,18 +2213,10 @@ std::pair<uint64_t, uint64_t> countTrianglesFromEncodedShards(
                                     (degree[sourceIndex] == degree[destIndex] &&
                                      sourceIndex < destIndex);
             if (sourceBeforeDest) {
-                uint32_t slot = 0;
-#ifdef _OPENMP
-#pragma omp atomic capture
-#endif
-                slot = forwardDegree[sourceIndex]++;
+                uint32_t slot = forwardDegree[sourceIndex]++;
                 csrNeighbors[static_cast<size_t>(csrOffsets[sourceIndex] + slot)] = destIndex;
             } else {
-                uint32_t slot = 0;
-#ifdef _OPENMP
-#pragma omp atomic capture
-#endif
-                slot = forwardDegree[destIndex]++;
+                uint32_t slot = forwardDegree[destIndex]++;
                 csrNeighbors[static_cast<size_t>(csrOffsets[destIndex] + slot)] = sourceIndex;
             }
         }
