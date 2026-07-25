@@ -7235,14 +7235,34 @@ static void history_triangle_command(int connFd, SQLiteDBInterface *sqlite, bool
 
     std::string message = "Graph ID?";
     int resultWr = write(connFd, message.c_str(), message.length());
+    if (resultWr < 0) {
+        frontend_logger.error("Error writing to socket");
+        *loop_exit_p = true;
+        return;
+    }
     resultWr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+    if (resultWr < 0) {
+        frontend_logger.error("Error writing to socket");
+        *loop_exit_p = true;
+        return;
+    }
 
     std::string graphIdStr = read_frontend_socket_value(connFd);
     int graphId = std::stoi(graphIdStr);
 
     message = "Snapshot ID?";
     resultWr = write(connFd, message.c_str(), message.length());
+    if (resultWr < 0) {
+        frontend_logger.error("Error writing to socket");
+        *loop_exit_p = true;
+        return;
+    }
     resultWr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+    if (resultWr < 0) {
+        frontend_logger.error("Error writing to socket");
+        *loop_exit_p = true;
+        return;
+    }
 
     std::string snapshotStr = read_frontend_socket_value(connFd);
     uint32_t snapshotId = std::stoul(snapshotStr);
@@ -7251,7 +7271,17 @@ static void history_triangle_command(int connFd, SQLiteDBInterface *sqlite, bool
         if (!JasmineGraphFrontEndCommon::graphExistsByID(graphIdStr, sqlite)) {
             std::string response = "Error: Graph " + graphIdStr + " does not exist";
             resultWr = write(connFd, response.c_str(), response.length());
+            if (resultWr < 0) {
+                frontend_logger.error("Error writing to socket");
+                *loop_exit_p = true;
+                return;
+            }
             resultWr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+            if (resultWr < 0) {
+                frontend_logger.error("Error writing to socket");
+                *loop_exit_p = true;
+                return;
+            }
             frontend_logger.warn("History triangle requested for non-existent graph " + graphIdStr);
             return;
         }
@@ -7260,7 +7290,17 @@ static void history_triangle_command(int connFd, SQLiteDBInterface *sqlite, bool
         if (snapMap.empty()) {
             std::string error = "Error: No snapshots found for graph " + std::to_string(graphId);
             resultWr = write(connFd, error.c_str(), error.length());
+            if (resultWr < 0) {
+                frontend_logger.error("Error writing to socket");
+                *loop_exit_p = true;
+                return;
+            }
             resultWr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+            if (resultWr < 0) {
+                frontend_logger.error("Error writing to socket");
+                *loop_exit_p = true;
+                return;
+            }
             return;
         }
         if (snapMap.find(snapshotId) == snapMap.end()) {
@@ -7271,7 +7311,17 @@ static void history_triangle_command(int connFd, SQLiteDBInterface *sqlite, bool
                   << ". Available range: [" << minSnapshot << ", " << maxSnapshot << "]";
             std::string errorText = error.str();
             resultWr = write(connFd, errorText.c_str(), errorText.length());
+            if (resultWr < 0) {
+                frontend_logger.error("Error writing to socket");
+                *loop_exit_p = true;
+                return;
+            }
             resultWr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+            if (resultWr < 0) {
+                frontend_logger.error("Error writing to socket");
+                *loop_exit_p = true;
+                return;
+            }
             return;
         }
 
@@ -7291,8 +7341,18 @@ static void history_triangle_command(int connFd, SQLiteDBInterface *sqlite, bool
                     " (no partitions responded — check worker connectivity, " +
                     "htria protocol, and snapshot availability)";
                 resultWr = write(connFd, error.c_str(), error.length());
+                if (resultWr < 0) {
+                    frontend_logger.error("Error writing to socket");
+                    *loop_exit_p = true;
+                    return;
+                }
                 resultWr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
                                   Conts::CARRIAGE_RETURN_NEW_LINE.size());
+                if (resultWr < 0) {
+                    frontend_logger.error("Error writing to socket");
+                    *loop_exit_p = true;
+                    return;
+                }
                 frontend_logger.error(error);
                 return;
             }
@@ -7311,8 +7371,18 @@ static void history_triangle_command(int connFd, SQLiteDBInterface *sqlite, bool
                     std::to_string(snapshotId) +
                     " (distributed-direct failed; staged failed: " + stagedError + ")";
                 resultWr = write(connFd, error.c_str(), error.length());
+                if (resultWr < 0) {
+                    frontend_logger.error("Error writing to socket");
+                    *loop_exit_p = true;
+                    return;
+                }
                 resultWr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
                                   Conts::CARRIAGE_RETURN_NEW_LINE.size());
+                if (resultWr < 0) {
+                    frontend_logger.error("Error writing to socket");
+                    *loop_exit_p = true;
+                    return;
+                }
                 frontend_logger.error(error);
                 return;
             }
@@ -7346,7 +7416,17 @@ static void history_triangle_command(int connFd, SQLiteDBInterface *sqlite, bool
 
             std::string responseStr = response.str();
             resultWr = write(connFd, responseStr.c_str(), responseStr.length());
+            if (resultWr < 0) {
+                frontend_logger.error("Error writing to socket");
+                *loop_exit_p = true;
+                return;
+            }
             resultWr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+            if (resultWr < 0) {
+                frontend_logger.error("Error writing to socket");
+                *loop_exit_p = true;
+                return;
+            }
 
             appendHistoryQueryResultToFile("histrian", graphId,
                                            "snapshot=" + std::to_string(snapshotId),
@@ -7362,7 +7442,17 @@ static void history_triangle_command(int connFd, SQLiteDBInterface *sqlite, bool
     } catch (const std::exception& e) {
         std::string error = "Error: " + std::string(e.what());
         resultWr = write(connFd, error.c_str(), error.length());
+        if (resultWr < 0) {
+            frontend_logger.error("Error writing to socket");
+            *loop_exit_p = true;
+            return;
+        }
         resultWr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+        if (resultWr < 0) {
+            frontend_logger.error("Error writing to socket");
+            *loop_exit_p = true;
+            return;
+        }
         frontend_logger.error("Snapshot triangle count error: " + std::string(e.what()));
     }
 }
