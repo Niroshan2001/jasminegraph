@@ -428,7 +428,6 @@ TemporalTriangleResult HistoryTriangles::countTrianglesAtSnapshot(
         return result;
     }
 
-    std::vector<uint32_t> degree(nodeCount, 0);
     uint64_t uniqueEdgeCount = 0;
 
     phaseStart = nowMs();
