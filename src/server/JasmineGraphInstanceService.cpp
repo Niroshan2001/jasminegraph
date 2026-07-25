@@ -74,6 +74,8 @@ std::string masterIP;
 namespace {
 
 constexpr size_t HISTORY_TRIANGLE_BATCH_SIZE = 1024;
+constexpr int EDGE_ENCODING_SHIFT = 32;
+constexpr uint64_t LOWER_32_BIT_MASK = 0xFFFFFFFFULL;
 
 bool parsePartitionIdFromBitmapFileName(const std::string& fileName,
                                         int graphId,
@@ -177,8 +179,8 @@ bool sendUint32(int sockfd, uint32_t value) {
 }
 
 bool sendUint64(int sockfd, uint64_t value) {
-    uint32_t high = static_cast<uint32_t>(value >> 32);
-    uint32_t low = static_cast<uint32_t>(value & 0xffffffffULL);
+    uint32_t high = static_cast<uint32_t>(value >> EDGE_ENCODING_SHIFT);
+    uint32_t low = static_cast<uint32_t>(value & LOWER_32_BIT_MASK);
     return sendUint32(sockfd, high) && sendUint32(sockfd, low);
 }
 
@@ -3488,7 +3490,7 @@ static void history_triangles_command(int connFd, bool *loop_exit_p) {
 
             uint32_t u = getOrAddNode(sourceId);
             uint32_t v = getOrAddNode(destId);
-            uint64_t encoded = (static_cast<uint64_t>(std::min(u, v)) << 32) | std::max(u, v);
+            uint64_t encoded = (static_cast<uint64_t>(std::min(u, v)) << EDGE_ENCODING_SHIFT) | std::max(u, v);
 
             if (seenEdges.insert(encoded).second) {
                 // New unique edge for this partition; stream to master.
@@ -3669,7 +3671,7 @@ static void history_pagerank_command(int connFd, bool *loop_exit_p) {
                 v = it_v->second;
             }
 
-            uint64_t encodedEdge = (static_cast<uint64_t>(std::min(u, v)) << 32) | std::max(u, v);
+            uint64_t encodedEdge = (static_cast<uint64_t>(std::min(u, v)) << EDGE_ENCODING_SHIFT) | std::max(u, v);
             seenEdges.insert(encodedEdge);
             return true;
         });
@@ -3693,8 +3695,8 @@ static void history_pagerank_command(int connFd, bool *loop_exit_p) {
     // Build adjacency list from unique edges
     adjacency.resize(nodeCount);
     for (uint64_t encoded : seenEdges) {
-        uint32_t u = encoded >> 32;
-        uint32_t v = encoded & 0xFFFFFFFFULL;
+        uint32_t u = encoded >> EDGE_ENCODING_SHIFT;
+        uint32_t v = encoded & LOWER_32_BIT_MASK;
 
         // Add edges (both directions for undirected graph or just u->v for directed)
         adjacency[u].push_back(v);

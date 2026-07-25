@@ -233,6 +233,7 @@ bool buildPageRankCsrFromSnapshotDir(int graphId,
                                      PageRankCsrGraph& graph) {
     constexpr size_t EDGE_SHARD_COUNT = 256;
     constexpr size_t SHARD_WRITE_BATCH_EDGES = 4096;
+    constexpr size_t INITIAL_NODE_RESERVE = 1024;
 
     std::vector<uint32_t> partitionIds = discoverBitmapPartitions(snapshotDir, graphId);
     if (partitionIds.empty()) {
@@ -274,8 +275,8 @@ bool buildPageRankCsrFromSnapshotDir(int graphId,
     std::unordered_map<std::string, uint32_t> nodeToIndex;
     std::vector<uint32_t> outDegree;
     bool streamFailed = false;
-    nodeToIndex.reserve(1024);
-    graph.indexToNode.reserve(1024);
+    nodeToIndex.reserve(INITIAL_NODE_RESERVE);
+    graph.indexToNode.reserve(INITIAL_NODE_RESERVE);
 
     auto getOrAddNode = [&](const std::string& node) -> uint32_t {
         auto it = nodeToIndex.find(node);
