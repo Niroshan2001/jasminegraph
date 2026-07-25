@@ -175,7 +175,7 @@ static void streaming_triangles_command(std::string masterIP, int connFd, JobSch
                                         int numberOfPartitions, bool *strian_exit);
 static void history_triangle_command(int connFd, SQLiteDBInterface *sqlite, bool *loop_exit_p,
                                      const std::string& masterIP);
-static void history_triangle_timestamp_command(int connFd, SQLiteDBInterface *, bool *,
+static void history_triangle_timestamp_command(int connFd, SQLiteDBInterface *, bool *loop_exit_p,
                                                const std::string& masterIP);
 static void history_pagerank_command(int connFd, SQLiteDBInterface *sqlite, bool *loop_exit_p,
                                      const std::string& masterIP);
@@ -1622,6 +1622,10 @@ static bool countHistoryTrianglesFromStagedBitmaps(SQLiteDBInterface* sqlite,
     std::string stagedSnapshotDir = stageTemporalBitmapIndexesForGraph(sqlite, graphId, snapshotDir);
     if (stagedSnapshotDir.empty()) {
         errorMessage = "No temporal bitmap index files available for graph " + std::to_string(graphId);
+        if (!localDirectFailureReason.empty()) {
+            errorMessage += " (local fallback reason: " + localDirectFailureReason + ")";
+        }
+        frontend_logger.error(errorMessage);
         return false;
     }
 
@@ -1636,11 +1640,19 @@ static bool countHistoryTrianglesFromStagedBitmaps(SQLiteDBInterface* sqlite,
     } catch (const std::exception& e) {
         cleanupStagedTemporalBitmapIndexes(stagedSnapshotDir);
         errorMessage = e.what();
+        if (!localDirectFailureReason.empty()) {
+            errorMessage += " (local fallback reason: " + localDirectFailureReason + ")";
+        }
+        frontend_logger.error("Exception in history triangle staged fallback: " + errorMessage);
         return false;
     }
 
     if (result.partitionsProcessed == 0) {
         errorMessage = "No snapshot partitions were processed for graph " + std::to_string(graphId);
+        if (!localDirectFailureReason.empty()) {
+            errorMessage += " (local fallback reason: " + localDirectFailureReason + ")";
+        }
+        frontend_logger.error(errorMessage);
         return false;
     }
 
@@ -7508,7 +7520,7 @@ static std::string formatSnapshotTimestamp(uint64_t timestampNs) {
     return format_local_timestamp(snapshotTime);
 }
 
-static void history_triangle_timestamp_command(int connFd, SQLiteDBInterface *sqlite, bool *,
+static void history_triangle_timestamp_command(int connFd, SQLiteDBInterface *sqlite, bool *loop_exit_p,
                                                const std::string& masterIP) {
     frontend_logger.info("History triangle count by timestamp command received");
     auto totalStart = std::chrono::high_resolution_clock::now();
@@ -7530,6 +7542,7 @@ static void history_triangle_timestamp_command(int connFd, SQLiteDBInterface *sq
         uint64_t targetTimestamp = 0;
         if (!parseTemporalTargetTimestamp(timestampStr, targetTimestamp)) {
             std::string error = "Error: Invalid timestamp format";
+            frontend_logger.error(error + ": " + timestampStr);
             resultWr = write(connFd, error.c_str(), error.length());
             resultWr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
             return;
@@ -7537,9 +7550,9 @@ static void history_triangle_timestamp_command(int connFd, SQLiteDBInterface *sq
 
         if (!JasmineGraphFrontEndCommon::graphExistsByID(graphIdStr, sqlite)) {
             std::string response = "Error: Graph " + graphIdStr + " does not exist";
+            frontend_logger.error(response);
             resultWr = write(connFd, response.c_str(), response.length());
             resultWr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
-            frontend_logger.warn("History triangle timestamp requested for non-existent graph " + graphIdStr);
             return;
         }
 
@@ -7547,6 +7560,7 @@ static void history_triangle_timestamp_command(int connFd, SQLiteDBInterface *sq
 
         if (snapshotTimestamps.empty()) {
             std::string error = "Error: No snapshots found for graph " + std::to_string(graphId);
+            frontend_logger.error(error);
             resultWr = write(connFd, error.c_str(), error.length());
             resultWr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
             return;
@@ -7567,6 +7581,7 @@ static void history_triangle_timestamp_command(int connFd, SQLiteDBInterface *sq
                     std::to_string(closestSnapshotId) +
                     " (no partitions responded — check worker connectivity, " +
                     "htria protocol, and snapshot availability)";
+                frontend_logger.error(error);
                 resultWr = write(connFd, error.c_str(), error.length());
                 resultWr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
                                   Conts::CARRIAGE_RETURN_NEW_LINE.size());
@@ -7585,6 +7600,7 @@ static void history_triangle_timestamp_command(int connFd, SQLiteDBInterface *sq
                     "Error: Failed to process snapshot " +
                     std::to_string(closestSnapshotId) +
                     " (distributed-direct failed; staged failed: " + stagedError + ")";
+                frontend_logger.error(error);
                 resultWr = write(connFd, error.c_str(), error.length());
                 resultWr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
                                   Conts::CARRIAGE_RETURN_NEW_LINE.size());
@@ -7868,6 +7884,10 @@ static bool countHistoryPageRankFromStagedBitmaps(SQLiteDBInterface *sqlite,
     std::string stagedSnapshotDir = stageTemporalBitmapIndexesForGraph(sqlite, graphId, snapshotDir);
     if (stagedSnapshotDir.empty()) {
         errorMessage = "No temporal bitmap index files available for graph " + std::to_string(graphId);
+        if (!localDirectFailureReason.empty()) {
+            errorMessage += " (local fallback reason: " + localDirectFailureReason + ")";
+        }
+        frontend_logger.error(errorMessage);
         return false;
     }
 
@@ -7877,6 +7897,10 @@ static bool countHistoryPageRankFromStagedBitmaps(SQLiteDBInterface *sqlite,
         cleanupStagedTemporalBitmapIndexes(stagedSnapshotDir);
         if (result.partitionsProcessed == 0) {
             errorMessage = "No snapshot partitions were processed for graph " + std::to_string(graphId);
+            if (!localDirectFailureReason.empty()) {
+                errorMessage += " (local fallback reason: " + localDirectFailureReason + ")";
+            }
+            frontend_logger.error(errorMessage);
             return false;
         }
 
@@ -7885,6 +7909,10 @@ static bool countHistoryPageRankFromStagedBitmaps(SQLiteDBInterface *sqlite,
     } catch (const std::exception& e) {
         cleanupStagedTemporalBitmapIndexes(stagedSnapshotDir);
         errorMessage = e.what();
+        if (!localDirectFailureReason.empty()) {
+            errorMessage += " (local fallback reason: " + localDirectFailureReason + ")";
+        }
+        frontend_logger.error("Exception in history PageRank staged fallback: " + errorMessage);
         return false;
     }
 }
@@ -7945,6 +7973,7 @@ static void history_pagerank_command(int connFd, SQLiteDBInterface *sqlite, bool
             error << "Error: Snapshot " << snapshotId << " not found for graph " << graphId
                   << ". Available range: [" << minSnapshot << ", " << maxSnapshot << "]";
             std::string errorText = error.str();
+            frontend_logger.error(errorText);
             resultWr = write(connFd, errorText.c_str(), errorText.length());
             resultWr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
             return;
@@ -8040,6 +8069,7 @@ static void history_pagerank_timestamp_command(int connFd, SQLiteDBInterface *sq
         uint64_t targetTimestamp = 0;
         if (!parseTemporalTargetTimestamp(timestampStr, targetTimestamp)) {
             std::string error = "Error: Invalid timestamp format. Use YYYY-MM-DD HH:MM:SS or Unix epoch.";
+            frontend_logger.error(error + ": " + timestampStr);
             resultWr = write(connFd, error.c_str(), error.length());
             resultWr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
                              Conts::CARRIAGE_RETURN_NEW_LINE.size());
@@ -8048,9 +8078,9 @@ static void history_pagerank_timestamp_command(int connFd, SQLiteDBInterface *sq
 
         if (!JasmineGraphFrontEndCommon::graphExistsByID(graphIdStr, sqlite)) {
             std::string response = "Error: Graph " + graphIdStr + " does not exist";
+            frontend_logger.error(response);
             resultWr = write(connFd, response.c_str(), response.length());
             resultWr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
-            frontend_logger.warn("History PageRank timestamp requested for non-existent graph " + graphIdStr);
             return;
         }
 
@@ -8058,6 +8088,7 @@ static void history_pagerank_timestamp_command(int connFd, SQLiteDBInterface *sq
 
         if (snapshotTimestamps.empty()) {
             std::string error = "Error: No snapshots found for graph " + std::to_string(graphId);
+            frontend_logger.error(error);
             resultWr = write(connFd, error.c_str(), error.length());
             resultWr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
                              Conts::CARRIAGE_RETURN_NEW_LINE.size());
